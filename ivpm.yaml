@@ -1,0 +1,22 @@
+package:
+  name: zuspec-fe-sv
+
+  dep-sets:
+  - name: default-dev
+    deps: 
+    - name: pyslang
+      src: pypi
+    - name: pytest
+      src: pypi
+#    - name: slang
+#      url: https://github.com/MikePopoloski/slang.git
+#      type: raw
+#      depth: 0
+#      cache: true
+    - name: zuspec-dataclasses
+      url: https://github.com/zuspec/zuspec-dataclasses.git
+    - name: uvm
+      url: https://www.accellera.org/images/downloads/standards/uvm/Accellera-1800.2-2017-1.0.tar.gz
+      cache: true
+
+
