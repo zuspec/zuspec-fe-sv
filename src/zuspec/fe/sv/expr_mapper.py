@@ -15,6 +15,9 @@ from zuspec.dataclasses.ir.expr import (
     ExprAttribute,
     ExprSubscript,
     ExprRefLocal,
+    ExprRefField,
+    TypeExprRefSelf,
+    ExprAwait,
     BinOp,
     UnaryOp,
     CmpOp,
@@ -42,6 +45,11 @@ class ExprMapper:
     def __init__(self, config: SVToZuspecConfig, error_reporter: ErrorReporter):
         self.config = config
         self.error_reporter = error_reporter
+        self._field_context: dict = {}  # field name → index in DataTypeComponent.fields
+
+    def set_field_context(self, field_map: dict) -> None:
+        """Set the field name→index map used to resolve ClassProperty references."""
+        self._field_context = field_map
     
     def map_expression(self, sv_expr) -> Optional[Expr]:
         """Map a SystemVerilog expression to Zuspec IR.
@@ -57,48 +65,30 @@ class ExprMapper:
         
         try:
             # Get expression kind
-            expr_kind = str(sv_expr.kind) if hasattr(sv_expr, 'kind') else None
+            expr_kind = sv_expr.kind if hasattr(sv_expr, 'kind') else None
             
-            if not expr_kind:
+            if expr_kind is None:
                 self.error_reporter.error(f"Unknown expression type: {type(sv_expr)}")
                 return None
             
-            # Binary operations
-            if expr_kind == 'ExpressionKind.BinaryOp':
+            if expr_kind == pyslang.ExpressionKind.BinaryOp:
                 return self._map_binary_op(sv_expr)
-            
-            # Unary operations
-            elif expr_kind == 'ExpressionKind.UnaryOp':
+            elif expr_kind == pyslang.ExpressionKind.UnaryOp:
                 return self._map_unary_op(sv_expr)
-            
-            # Integer literal
-            elif expr_kind == 'ExpressionKind.IntegerLiteral':
+            elif expr_kind == pyslang.ExpressionKind.IntegerLiteral:
                 return self._map_integer_literal(sv_expr)
-            
-            # String literal
-            elif expr_kind == 'ExpressionKind.StringLiteral':
+            elif expr_kind == pyslang.ExpressionKind.StringLiteral:
                 return self._map_string_literal(sv_expr)
-            
-            # Named value (variable reference)
-            elif expr_kind == 'ExpressionKind.NamedValue':
+            elif expr_kind == pyslang.ExpressionKind.NamedValue:
                 return self._map_named_value(sv_expr)
-            
-            # Member access
-            elif expr_kind == 'ExpressionKind.MemberAccess':
+            elif expr_kind == pyslang.ExpressionKind.MemberAccess:
                 return self._map_member_access(sv_expr)
-            
-            # Element select (array subscript)
-            elif expr_kind == 'ExpressionKind.ElementSelect':
+            elif expr_kind == pyslang.ExpressionKind.ElementSelect:
                 return self._map_element_select(sv_expr)
-            
-            # Call expression
-            elif expr_kind == 'ExpressionKind.Call':
+            elif expr_kind == pyslang.ExpressionKind.Call:
                 return self._map_call(sv_expr)
-            
-            # Conversion (may be implicit cast)
-            elif expr_kind == 'ExpressionKind.Conversion':
+            elif expr_kind == pyslang.ExpressionKind.Conversion:
                 return self._map_conversion(sv_expr)
-            
             else:
                 self.error_reporter.error(f"Unsupported expression kind: {expr_kind}")
                 return None
@@ -118,8 +108,10 @@ class ExprMapper:
             op_str = str(sv_expr.op)
             
             # Check for 4-state operators
-            if op_str in ['BinaryOperator.CaseEquality', 'BinaryOperator.CaseInequality',
-                          'BinaryOperator.WildcardEquality', 'BinaryOperator.WildcardInequality']:
+            if sv_expr.op in (pyslang.BinaryOperator.CaseEquality,
+                              pyslang.BinaryOperator.CaseInequality,
+                              pyslang.BinaryOperator.WildcardEquality,
+                              pyslang.BinaryOperator.WildcardInequality):
                 self.error_reporter.error(
                     f"4-state operator not supported: {op_str}",
                     suggestion="Use 2-state operators (==, !=)"
@@ -214,19 +206,7 @@ class ExprMapper:
     def _map_integer_literal(self, sv_expr) -> Optional[ExprConstant]:
         """Map integer literal."""
         try:
-            # Get the value - pyslang represents this differently
-            # For now, try to extract as string and convert
-            value_str = str(sv_expr)
-            
-            # Try to extract numeric value
-            try:
-                value = int(value_str)
-            except:
-                # May have formatting like 32'd10, extract the number
-                value = 0  # Default
-            
-            return ExprConstant(value=value)
-            
+            return ExprConstant(value=int(sv_expr.value))
         except Exception as e:
             self.error_reporter.error(f"Error mapping integer literal: {str(e)}")
             return None
@@ -240,17 +220,20 @@ class ExprMapper:
             self.error_reporter.error(f"Error mapping string literal: {str(e)}")
             return None
     
-    def _map_named_value(self, sv_expr) -> Optional[ExprRefLocal]:
-        """Map named value reference."""
+    def _map_named_value(self, sv_expr) -> Optional[Expr]:
+        """Map named value reference — field ref or local."""
         try:
-            # Get the symbol being referenced
-            if hasattr(sv_expr, 'symbol'):
-                name = str(sv_expr.symbol.name)
-                return ExprRefLocal(name=name)
-            
-            self.error_reporter.error("Named value has no symbol")
-            return None
-            
+            if not hasattr(sv_expr, 'symbol'):
+                self.error_reporter.error("Named value has no symbol")
+                return None
+            sym = sv_expr.symbol
+            name = sym.name
+            # If this is a class property that's in our field context, emit a field ref
+            if (sym.kind == pyslang.SymbolKind.ClassProperty
+                    and name in self._field_context):
+                idx = self._field_context[name]
+                return ExprRefField(base=TypeExprRefSelf(), index=idx)
+            return ExprRefLocal(name=name)
         except Exception as e:
             self.error_reporter.error(f"Error mapping named value: {str(e)}")
             return None
@@ -295,27 +278,39 @@ class ExprMapper:
             self.error_reporter.error(f"Error mapping element select: {str(e)}")
             return None
     
-    def _map_call(self, sv_expr) -> Optional[ExprCall]:
-        """Map function call."""
+    def _map_call(self, sv_expr) -> Optional[Expr]:
+        """Map function/method call."""
         try:
-            # Get function being called
-            # This may be a method or function reference
-            func_name = "unknown"
-            if hasattr(sv_expr, 'subroutine'):
-                func_name = str(sv_expr.subroutine.name)
-            
+            # Method call on a field: count.write(...) / count.read()
+            tc = getattr(sv_expr, 'thisClass', None)
+            if tc is not None and tc.kind == pyslang.ExpressionKind.NamedValue:
+                sym = tc.symbol
+                if (sym.kind == pyslang.SymbolKind.ClassProperty
+                        and sym.name in self._field_context):
+                    idx = self._field_context[sym.name]
+                    receiver = ExprRefField(base=TypeExprRefSelf(), index=idx)
+                    method_name = sv_expr.subroutine.name
+                    is_task = sv_expr.subroutine.subroutineKind == pyslang.SubroutineKind.Task
+                    args = [self.map_expression(a) for a in sv_expr.arguments]
+                    args = [a for a in args if a is not None]
+                    call = ExprCall(
+                        func=ExprAttribute(value=receiver, attr=method_name),
+                        args=args,
+                        keywords=[],
+                    )
+                    return ExprAwait(value=call) if is_task else call
+
+            # Generic call
+            func_name = sv_expr.subroutine.name if hasattr(sv_expr, 'subroutine') else "unknown"
             func_ref = ExprRefLocal(name=func_name)
-            
-            # Get arguments
             args = []
             if hasattr(sv_expr, 'arguments'):
-                for arg in sv_expr.arguments():
+                for arg in sv_expr.arguments:
                     arg_expr = self.map_expression(arg)
                     if arg_expr:
                         args.append(arg_expr)
-            
             return ExprCall(func=func_ref, args=args, keywords=[])
-            
+
         except Exception as e:
             self.error_reporter.error(f"Error mapping call: {str(e)}")
             return None

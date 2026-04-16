@@ -20,19 +20,14 @@ class zsp_component_root #(type T) extends T;
         end
     endtask
 
-    // Handle 
-    local function do_build(zsp_component comp);
-        comp.build(null);
+    local function void do_build(zsp_component comp);
+        comp.build();
         foreach (comp.m_children[i]) begin
             do_build(comp.m_children[i]);
         end
     endfunction
 
-    local function do_connect(zsp_component comp);
-        if (clock_d != null) begin
-            clock_d = m_parent.clock_d;
-        end
-        // Connect bottom-up
+    local function void do_connect(zsp_component comp);
         foreach (comp.m_children[i]) begin
             do_connect(comp.m_children[i]);
         end

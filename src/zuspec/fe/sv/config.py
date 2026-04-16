@@ -28,3 +28,6 @@ class SVToZuspecConfig:
     
     warn_only: bool = False
     """Warn instead of error (doesn't apply to critical features like 4-state)"""
+
+    include_dirs: List[str] = field(default_factory=list)
+    """Additional include directories for SV preprocessing"""

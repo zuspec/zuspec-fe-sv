@@ -104,6 +104,19 @@ class TypeMapper:
         }
         return replacements.get(type_name, 'Use a 2-state type (bit, int, byte, etc.)')
     
+    def map_zsp_reg_width(self, prop_sym) -> tuple:
+        """Extract (bits, signed) from a zsp_reg_c #(T) ClassProperty symbol."""
+        try:
+            val = prop_sym.type.find('val')
+            if val is None:
+                return (32, False)
+            t = val.type
+            bits = int(t.bitWidth) if hasattr(t, 'bitWidth') else 32
+            signed = bool(t.isSigned) if hasattr(t, 'isSigned') else False
+            return (bits, signed)
+        except Exception:
+            return (32, False)
+
     def is_4state_type(self, type_name: str) -> bool:
         """Check if a type name is a 4-state type."""
         return type_name.lower() in ['logic', 'reg', 'integer']

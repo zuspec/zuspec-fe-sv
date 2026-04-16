@@ -1,8 +1,17 @@
 """SystemVerilog parser wrapper using slang library."""
 from typing import List, Optional
+import os
 import pyslang
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.error import ErrorReporter
+
+_SHARE_DIR = os.path.join(os.path.dirname(__file__), 'share')
+_LIB_FILES = [
+    os.path.join(_SHARE_DIR, 'zsp_clock_if.sv'),
+    os.path.join(_SHARE_DIR, 'zsp_reset_if.sv'),
+    os.path.join(_SHARE_DIR, 'zsp_reg_if.sv'),
+    os.path.join(_SHARE_DIR, 'zsp_pkg.sv'),
+]
 
 
 class SVParser:
@@ -18,7 +27,7 @@ class SVParser:
         self.compilation: Optional[pyslang.Compilation] = None
     
     def parse_files(self, file_paths: List[str]) -> bool:
-        """Parse SystemVerilog files.
+        """Parse SystemVerilog files, pre-loading the zsp library.
         
         Args:
             file_paths: List of file paths to parse
@@ -27,49 +36,33 @@ class SVParser:
             True if parsing succeeded, False otherwise
         """
         try:
-            # Create compilation with default options
+            sm = pyslang.SourceManager()
+            sm.addUserDirectories(_SHARE_DIR)
+            for d in self.config.include_dirs:
+                sm.addUserDirectories(d)
+
             self.compilation = pyslang.Compilation()
-            
-            # Add files to compilation
+            # Keep strong references to all SyntaxTree objects so they aren't
+            # garbage-collected (the C++ compilation holds raw pointers into them).
+            self._trees = []
+
+            for lib_path in _LIB_FILES:
+                t = pyslang.SyntaxTree.fromFile(lib_path, sm)
+                self._trees.append(t)
+                self.compilation.addSyntaxTree(t)
+
             for file_path in file_paths:
-                self.compilation.addSyntaxTree(
-                    pyslang.SyntaxTree.fromFile(file_path)
-                )
-            
-            # Check for diagnostics (errors/warnings)
-            diagnostics = self.compilation.getAllDiagnostics()
-            
-            for diag in diagnostics:
-                # Get location info
-                location = diag.location
-                file_path = None
-                line = None
-                column = None
-                
-                if location:
-                    if hasattr(location, 'buffer') and location.buffer:
-                        file_path = str(location.buffer.name)
-                
-                # Get message - just use code for now since formattedMessage doesn't exist
-                message = f"Diagnostic code: {diag.code}"
-                
+                t = pyslang.SyntaxTree.fromFile(file_path, sm)
+                self._trees.append(t)
+                self.compilation.addSyntaxTree(t)
+
+            # Report errors only (suppress warnings for library code)
+            for diag in self.compilation.getAllDiagnostics():
                 if diag.isError():
-                    self.error_reporter.error(
-                        message=message,
-                        file_path=file_path,
-                        line=line,
-                        column=column,
-                    )
-                else:
-                    self.error_reporter.warning(
-                        message=message,
-                        file_path=file_path,
-                        line=line,
-                        column=column,
-                    )
-            
+                    self.error_reporter.error(f"SV parse error: {diag.code}")
+
             return not self.error_reporter.has_errors()
-            
+
         except Exception as e:
             self.error_reporter.error(f"Parser error: {str(e)}")
             return False
@@ -93,15 +86,17 @@ class SVParser:
             self.compilation.addSyntaxTree(tree)
             
             # Check for diagnostics
-            diagnostics = self.compilation.getAllDiagnostics()
-            
-            for diag in diagnostics:
-                message = f"Diagnostic code: {diag.code}"
-                
+            for diag in self.compilation.getAllDiagnostics():
                 if diag.isError():
-                    self.error_reporter.error(message=message, file_path=file_name)
+                    self.error_reporter.error(
+                        message=f"Diagnostic code: {diag.code}",
+                        file_path=file_name,
+                    )
                 else:
-                    self.error_reporter.warning(message=message, file_path=file_name)
+                    self.error_reporter.warning(
+                        message=f"Diagnostic code: {diag.code}",
+                        file_path=file_name,
+                    )
             
             return not self.error_reporter.has_errors()
             
@@ -110,11 +105,7 @@ class SVParser:
             return False
     
     def get_root(self) -> Optional[pyslang.RootSymbol]:
-        """Get the root symbol of the compilation.
-        
-        Returns:
-            Root symbol or None if not parsed
-        """
+        """Get the root symbol of the compilation."""
         if self.compilation:
             return self.compilation.getRoot()
         return None

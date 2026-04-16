@@ -17,7 +17,7 @@ from zuspec.dataclasses.ir.stmt import (
     StmtContinue,
     StmtExpr,
 )
-from zuspec.dataclasses.ir.expr import ExprRefLocal
+from zuspec.dataclasses.ir.expr import ExprRefLocal, ExprConstant
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.expr_mapper import ExprMapper
@@ -59,47 +59,50 @@ class StmtMapper:
         
         try:
             # Get statement kind
-            stmt_kind = str(sv_stmt.kind) if hasattr(sv_stmt, 'kind') else None
+            stmt_kind = sv_stmt.kind if hasattr(sv_stmt, 'kind') else None
             
-            if not stmt_kind:
+            if stmt_kind is None:
                 self.error_reporter.error(f"Unknown statement type: {type(sv_stmt)}")
                 return None
             
-            # Assignment statement
-            if stmt_kind == 'StatementKind.ExpressionStatement':
+            # Assignment / expression statement
+            if stmt_kind == pyslang.StatementKind.ExpressionStatement:
                 return self._map_expression_statement(sv_stmt)
             
             # Return statement
-            elif stmt_kind == 'StatementKind.Return':
+            elif stmt_kind == pyslang.StatementKind.Return:
                 return self._map_return(sv_stmt)
             
             # Conditional statement
-            elif stmt_kind == 'StatementKind.Conditional':
+            elif stmt_kind == pyslang.StatementKind.Conditional:
                 return self._map_conditional(sv_stmt)
             
             # For loop
-            elif stmt_kind == 'StatementKind.ForLoop':
+            elif stmt_kind == pyslang.StatementKind.ForLoop:
                 return self._map_for_loop(sv_stmt)
             
             # While/do-while loop
-            elif stmt_kind in ['StatementKind.WhileLoop', 'StatementKind.DoWhileLoop']:
+            elif stmt_kind in (pyslang.StatementKind.WhileLoop, pyslang.StatementKind.DoWhileLoop):
                 return self._map_while_loop(sv_stmt)
+
+            # Forever loop
+            elif stmt_kind == pyslang.StatementKind.ForeverLoop:
+                return self._map_forever_loop(sv_stmt)
             
             # Break statement
-            elif stmt_kind == 'StatementKind.Break':
+            elif stmt_kind == pyslang.StatementKind.Break:
                 return StmtBreak()
             
             # Continue statement
-            elif stmt_kind == 'StatementKind.Continue':
+            elif stmt_kind == pyslang.StatementKind.Continue:
                 return StmtContinue()
             
             # Block (list of statements)
-            elif stmt_kind == 'StatementKind.Block':
-                # Return list of mapped statements
+            elif stmt_kind == pyslang.StatementKind.Block:
                 return self._map_block(sv_stmt)
             
             # Statement list
-            elif stmt_kind == 'StatementKind.List':
+            elif stmt_kind == pyslang.StatementKind.List:
                 return self._map_statement_list(sv_stmt)
             
             else:
@@ -157,10 +160,10 @@ class StmtMapper:
                 return None
             
             sv_expr = sv_stmt.expr
-            expr_kind = str(sv_expr.kind) if hasattr(sv_expr, 'kind') else None
+            expr_kind = sv_expr.kind if hasattr(sv_expr, 'kind') else None
             
             # Check if it's an assignment
-            if expr_kind == 'ExpressionKind.Assignment':
+            if expr_kind == pyslang.ExpressionKind.Assignment:
                 return self._map_assignment(sv_expr)
             
             # Otherwise, it's just an expression statement
@@ -300,6 +303,17 @@ class StmtMapper:
             self.error_reporter.error(f"Error mapping while loop: {str(e)}")
             return None
     
+    def _map_forever_loop(self, sv_stmt) -> Optional[StmtWhile]:
+        """Map forever loop → StmtWhile(test=True, ...)."""
+        try:
+            body = []
+            if hasattr(sv_stmt, 'body') and sv_stmt.body:
+                body = self.map_statements(sv_stmt.body)
+            return StmtWhile(test=ExprConstant(value=True), body=body, orelse=[])
+        except Exception as e:
+            self.error_reporter.error(f"Error mapping forever loop: {str(e)}")
+            return None
+
     def _map_block(self, sv_stmt) -> List[Stmt]:
         """Map block statement (begin/end)."""
         try:

@@ -1,14 +1,10 @@
 
-typedef class zsp_build_ctxt;
-typedef class zsp_component_ctxt;
-typedef class zsp_domain_clock;
 typedef class zsp_object;
 
 class zsp_component extends zsp_object;
     zsp_component           m_parent;
     zsp_component           m_children[$];
-    zsp_domain_clock        clock_d;
-    zsp_domain_clock        m_clock_domains[$];
+    zsp_domain_clock_c      clock_d;
 
     function new(string name, zsp_component parent);
         m_parent = parent;
@@ -17,14 +13,10 @@ class zsp_component extends zsp_object;
         end
     endfunction
 
-    virtual function void build(zsp_component_ctxt ctxt);
-        // Get init from map
-
-        // Pass an initialization object (consts), not parent
-//        ::create("abc", cfg);
+    virtual function void build();
     endfunction
 
-    virtual function void connect(zsp_component_ctxt ctxt);
+    virtual function void connect();
     endfunction
 
     virtual task run();
