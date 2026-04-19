@@ -4,7 +4,7 @@ from zuspec.fe.sv.parser import SVParser
 from zuspec.fe.sv.expr_mapper import ExprMapper
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.error import ErrorReporter
-from zuspec.dataclasses.ir.expr import ExprBin, ExprUnary, ExprConstant, ExprRefLocal, BinOp, UnaryOp
+from zuspec.ir.core.expr import ExprBin, ExprUnary, ExprConstant, ExprRefLocal, BinOp, UnaryOp
 
 
 @pytest.fixture

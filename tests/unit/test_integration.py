@@ -1,7 +1,7 @@
 """Integration tests for the complete SV to IR mapper."""
 import pytest
 from zuspec.fe.sv.mapper import SVMapper
-from zuspec.dataclasses.ir.data_type import DataTypeClass, DataTypeInt
+from zuspec.ir.core.data_type import DataTypeClass, DataTypeInt
 
 
 def test_map_simple_uvm_like_class():

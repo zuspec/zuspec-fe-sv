@@ -233,3 +233,34 @@ The implementation follows a modular, layered design:
 ## License
 
 Apache License 2.0 - See LICENSE file.
+
+## CLI Plugin
+
+`zuspec-fe-sv` registers an `SVFrontend` automatically with `zuspec-cli` when
+both packages are installed.
+
+### Usage
+
+```bash
+# Auto-detect frontend from .sv extension
+zuspec synth rv32_pkg.sv --top rv32i_decode_c -o out.sv
+
+# Explicitly select the SV frontend
+zuspec synth --fe sv rv32_pkg.sv --top rv32i_decode_c -o out.sv
+```
+
+The frontend parses `.sv` / `.svh` files via `pyslang`, locates the named class
+in the compilation, maps it to a `ConstraintCompiler` IR, and passes it to the
+transform pipeline.
+
+### Entry point
+
+Declared in `pyproject.toml`:
+
+```toml
+[project.entry-points."zuspec.ext"]
+zuspec_fe_sv = "zuspec.fe.sv.cli_plugin:SVPlugin"
+```
+
+The plugin is discovered automatically via Python's `importlib.metadata` entry
+point mechanism — no manual registration required.

@@ -29,6 +29,7 @@ classifiers = [
 
 dependencies = [
     "pyslang>=3.0",
+    "zuspec-ir-core",
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,9 @@ Homepage = "https://github.com/zuspec/zuspec-fe-sv"
 Repository = "https://github.com/zuspec/zuspec-fe-sv"
 Documentation = "https://github.com/zuspec/zuspec-fe-sv/docs"
 Issues = "https://github.com/zuspec/zuspec-fe-sv/issues"
+
+[project.entry-points."zuspec.ext"]
+zuspec_fe_sv = "zuspec.fe.sv.cli_plugin:SVPlugin"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

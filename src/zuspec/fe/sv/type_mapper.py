@@ -10,7 +10,7 @@ import os
 # Add packages to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
-from zuspec.dataclasses.ir.data_type import (
+from zuspec.ir.core.data_type import (
     DataTypeInt,
     DataTypeString,
     DataTypeEnum,

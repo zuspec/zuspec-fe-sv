@@ -3,7 +3,7 @@ import pytest
 from zuspec.fe.sv.type_mapper import TypeMapper
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.error import ErrorReporter
-from zuspec.dataclasses.ir.data_type import DataTypeInt
+from zuspec.ir.core.data_type import DataTypeInt
 
 
 @pytest.fixture

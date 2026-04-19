@@ -5,7 +5,8 @@ from zuspec.fe.sv.class_mapper import ClassMapper
 from zuspec.fe.sv.type_mapper import TypeMapper
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.error import ErrorReporter
-from zuspec.dataclasses.ir.data_type import DataTypeClass, DataTypeInt
+from zuspec.ir.core.data_type import DataTypeClass, DataTypeInt, DataTypeAction
+from zuspec.ir.core.fields import SignalDirection
 
 
 @pytest.fixture
@@ -17,6 +18,19 @@ def mappers():
     type_mapper = TypeMapper(config, error_reporter)
     class_mapper = ClassMapper(config, error_reporter, type_mapper)
     return parser, class_mapper, error_reporter
+
+
+def _find_class(root, name):
+    """Helper: find a ClassType symbol by name via visitor."""
+    found = []
+    def visitor(sym):
+        if hasattr(sym, 'kind') and str(sym.kind) == 'SymbolKind.ClassType':
+            if str(sym.name) == name:
+                found.append(sym)
+        return True
+    root.visit(visitor)
+    return found[0] if found else None
+
 
 
 def test_map_simple_class(mappers):
@@ -213,3 +227,134 @@ def test_map_class_various_2state_types(mappers):
     assert ir_class.fields[2].datatype.bits == 16  # shortint
     assert ir_class.fields[3].datatype.bits == 32  # int
     assert ir_class.fields[4].datatype.bits == 64  # longint
+
+# ---------------------------------------------------------------------------
+# Action class tests (Phase 2)
+# ---------------------------------------------------------------------------
+
+def test_map_action_class_basic(mappers):
+    """map_class() routes zsp_action_c subclasses to DataTypeAction."""
+    parser, class_mapper, error_reporter = mappers
+
+    # Use the zsp_pkg library (loaded automatically by SVParser.parse_files)
+    import os, tempfile
+    src = """`include "zsp_macros.svh"
+package test_pkg;
+    import zsp_pkg::*;
+
+    class my_comp_c extends zsp_component;
+        `zsp_component_utils(my_comp_c)
+    endclass
+
+    class my_act_c extends zsp_action_c #(my_comp_c);
+        logic [31:0] instr;   // non-rand → input
+        rand logic [6:0] op;  // rand
+        rand logic [3:0] alu; // rand
+        `zsp_action_utils(my_act_c, my_comp_c)
+    endclass
+endpackage
+"""
+    with tempfile.NamedTemporaryFile(suffix='.sv', mode='w', delete=False) as f:
+        f.write(src)
+        tmp = f.name
+
+    try:
+        ok = parser.parse_files([tmp])
+        assert ok, error_reporter.report()
+
+        class_mapper.compilation = parser.compilation
+        root = parser.get_root()
+        sym = _find_class(root, 'my_act_c')
+        assert sym is not None
+
+        ir = class_mapper.map_class(sym)
+        assert ir is not None
+        assert isinstance(ir, DataTypeAction)
+        assert ir.name == 'my_act_c'
+        assert ir.comp_type_name == 'my_comp_c'
+    finally:
+        os.unlink(tmp)
+
+
+def test_map_action_class_field_directions(mappers):
+    """rand fields get rand_kind='rand'; non-rand get direction=INPUT."""
+    parser, class_mapper, error_reporter = mappers
+
+    import os, tempfile
+    src = """`include "zsp_macros.svh"
+package test_pkg2;
+    import zsp_pkg::*;
+
+    class core_c extends zsp_component;
+        `zsp_component_utils(core_c)
+    endclass
+
+    class decode_c extends zsp_action_c #(core_c);
+        logic [31:0] instr;
+        rand logic [6:0] opcode;
+        `zsp_action_utils(decode_c, core_c)
+    endclass
+endpackage
+"""
+    with tempfile.NamedTemporaryFile(suffix='.sv', mode='w', delete=False) as f:
+        f.write(src)
+        tmp = f.name
+
+    try:
+        ok = parser.parse_files([tmp])
+        assert ok, error_reporter.report()
+        class_mapper.compilation = parser.compilation
+        root = parser.get_root()
+        sym = _find_class(root, 'decode_c')
+        assert sym is not None
+        ir = class_mapper.map_class(sym)
+        assert isinstance(ir, DataTypeAction)
+
+        by_name = {f.name: f for f in ir.fields}
+        assert by_name['instr'].direction == SignalDirection.INPUT
+        assert by_name['instr'].rand_kind is None
+        assert by_name['opcode'].rand_kind == 'rand'
+        assert by_name['opcode'].direction != SignalDirection.INPUT
+    finally:
+        os.unlink(tmp)
+
+
+def test_map_action_subclass_inherits(mappers):
+    """A class that extends an action subclass is still an action."""
+    parser, class_mapper, error_reporter = mappers
+
+    import os, tempfile
+    src = """`include "zsp_macros.svh"
+package test_pkg3;
+    import zsp_pkg::*;
+
+    class root_c extends zsp_component;
+        `zsp_component_utils(root_c)
+    endclass
+
+    class base_act_c extends zsp_action_c #(root_c);
+        rand logic [6:0] opcode;
+        `zsp_action_utils(base_act_c, root_c)
+    endclass
+
+    class ext_act_c extends base_act_c;
+        rand logic extra;
+        `zsp_action_utils(ext_act_c, root_c)
+    endclass
+endpackage
+"""
+    with tempfile.NamedTemporaryFile(suffix='.sv', mode='w', delete=False) as f:
+        f.write(src)
+        tmp = f.name
+
+    try:
+        ok = parser.parse_files([tmp])
+        assert ok, error_reporter.report()
+        class_mapper.compilation = parser.compilation
+        root = parser.get_root()
+        sym = _find_class(root, 'ext_act_c')
+        assert sym is not None
+        ir = class_mapper.map_class(sym)
+        assert isinstance(ir, DataTypeAction), f"Expected DataTypeAction, got {type(ir)}"
+    finally:
+        os.unlink(tmp)

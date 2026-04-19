@@ -6,7 +6,7 @@ import pyslang
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
-from zuspec.dataclasses.ir.expr import (
+from zuspec.ir.core.expr import (
     Expr,
     ExprBin,
     ExprUnary,

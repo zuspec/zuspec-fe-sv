@@ -6,7 +6,7 @@ import pyslang
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
-from zuspec.dataclasses.ir.data_type import DataTypeClass, DataTypeComponent
+from zuspec.ir.core.data_type import DataTypeClass, DataTypeComponent, DataTypeAction
 from zuspec.fe.sv.parser import SVParser
 from zuspec.fe.sv.type_mapper import TypeMapper
 from zuspec.fe.sv.expr_mapper import ExprMapper
@@ -53,6 +53,9 @@ class SVMapper:
         self.classes: List[DataTypeClass] = []
 
     def _collect_and_map(self, root) -> bool:
+        # Thread the Compilation reference so ClassMapper can query attributes
+        self.class_mapper.compilation = self.parser.compilation
+
         sv_classes = []
 
         def visitor(symbol):
@@ -93,6 +96,9 @@ class SVMapper:
 
     def get_components(self) -> List[DataTypeComponent]:
         return [c for c in self.classes if isinstance(c, DataTypeComponent)]
+
+    def get_actions(self) -> List[DataTypeAction]:
+        return [c for c in self.classes if isinstance(c, DataTypeAction)]
 
     def get_error_report(self) -> str:
         return self.error_reporter.report()

@@ -3,9 +3,9 @@ import os
 import pytest
 from zuspec.fe.sv.mapper import SVMapper
 from zuspec.fe.sv.config import SVToZuspecConfig
-from zuspec.dataclasses.ir.data_type import DataTypeComponent, Process
-from zuspec.dataclasses.ir.stmt import StmtWhile
-from zuspec.dataclasses.ir.expr import (
+from zuspec.ir.core.data_type import DataTypeComponent, Process
+from zuspec.ir.core.stmt import StmtWhile
+from zuspec.ir.core.expr import (
     ExprAwait, ExprCall, ExprAttribute, ExprRefField,
 )
 

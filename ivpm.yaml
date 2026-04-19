@@ -15,6 +15,8 @@ package:
 #      cache: true
     - name: zuspec-dataclasses
       url: https://github.com/zuspec/zuspec-dataclasses.git
+    - name: zuspec-ir-core
+      url: https://github.com/zuspec/zuspec-ir-core.git
     - name: uvm
       url: https://www.accellera.org/images/downloads/standards/uvm/Accellera-1800.2-2017-1.0.tar.gz
       cache: true

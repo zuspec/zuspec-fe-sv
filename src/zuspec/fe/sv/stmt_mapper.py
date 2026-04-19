@@ -6,7 +6,7 @@ import pyslang
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
-from zuspec.dataclasses.ir.stmt import (
+from zuspec.ir.core.stmt import (
     Stmt,
     StmtAssign,
     StmtIf,
@@ -17,7 +17,7 @@ from zuspec.dataclasses.ir.stmt import (
     StmtContinue,
     StmtExpr,
 )
-from zuspec.dataclasses.ir.expr import ExprRefLocal, ExprConstant
+from zuspec.ir.core.expr import ExprRefLocal, ExprConstant
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.expr_mapper import ExprMapper

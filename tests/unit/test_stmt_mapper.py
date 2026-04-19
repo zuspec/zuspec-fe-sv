@@ -5,7 +5,7 @@ from zuspec.fe.sv.stmt_mapper import StmtMapper
 from zuspec.fe.sv.expr_mapper import ExprMapper
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.error import ErrorReporter
-from zuspec.dataclasses.ir.stmt import StmtAssign, StmtReturn, StmtIf, StmtWhile
+from zuspec.ir.core.stmt import StmtAssign, StmtReturn, StmtIf, StmtWhile
 
 
 @pytest.fixture

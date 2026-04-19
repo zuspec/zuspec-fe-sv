@@ -6,8 +6,8 @@ import pyslang
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
-from zuspec.dataclasses.ir.data_type import Function
-from zuspec.dataclasses.ir.stmt import Arguments, Arg
+from zuspec.ir.core.data_type import Function
+from zuspec.ir.core.stmt import Arguments, Arg
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.type_mapper import TypeMapper

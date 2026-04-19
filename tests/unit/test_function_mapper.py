@@ -1,7 +1,7 @@
 """Unit tests for function mapper."""
 import pytest
 from zuspec.fe.sv.mapper import SVMapper
-from zuspec.dataclasses.ir.data_type import Function
+from zuspec.ir.core.data_type import Function
 
 
 def test_map_simple_function():
