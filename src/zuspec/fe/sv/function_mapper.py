@@ -1,10 +1,7 @@
 """Function/method mapping from SystemVerilog to Zuspec IR."""
 from typing import Optional, List
-import sys
-import os
 import pyslang
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
 from zuspec.ir.core.data_type import Function
 from zuspec.ir.core.stmt import Arguments, Arg
@@ -156,7 +153,7 @@ class FunctionMapper:
         """
         try:
             # Use type mapper for integral types
-            if isinstance(sv_type, pyslang.IntegralType):
+            if isinstance(sv_type, pyslang.ast.IntegralType):
                 type_str = str(sv_type)
                 if '[' in type_str:
                     type_name = type_str.split('[')[0].strip()

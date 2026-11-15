@@ -56,10 +56,10 @@ class SVFrontend(Frontend):
 
         sm = pyslang.SourceManager()
         sm.addUserDirectories(str(_SHARE))
-        comp = pyslang.Compilation()
+        comp = pyslang.ast.Compilation()
         trees = []
         for f in _LIB_FILES + list(files):
-            t = pyslang.SyntaxTree.fromFile(f, sm)
+            t = pyslang.syntax.SyntaxTree.fromFile(f, sm)
             trees.append(t)
             comp.addSyntaxTree(t)
 
@@ -69,7 +69,7 @@ class SVFrontend(Frontend):
         def visit(sym):
             nonlocal target
             if (
-                sym.kind == pyslang.SymbolKind.ClassType
+                sym.kind == pyslang.ast.SymbolKind.ClassType
                 and sym.name == top_name
             ):
                 target = sym

@@ -1,10 +1,7 @@
 """Statement mapping from SystemVerilog to Zuspec IR."""
 from typing import Optional, List
-import sys
-import os
 import pyslang
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
 from zuspec.ir.core.stmt import (
     Stmt,
@@ -66,43 +63,43 @@ class StmtMapper:
                 return None
             
             # Assignment / expression statement
-            if stmt_kind == pyslang.StatementKind.ExpressionStatement:
+            if stmt_kind == pyslang.ast.StatementKind.ExpressionStatement:
                 return self._map_expression_statement(sv_stmt)
             
             # Return statement
-            elif stmt_kind == pyslang.StatementKind.Return:
+            elif stmt_kind == pyslang.ast.StatementKind.Return:
                 return self._map_return(sv_stmt)
             
             # Conditional statement
-            elif stmt_kind == pyslang.StatementKind.Conditional:
+            elif stmt_kind == pyslang.ast.StatementKind.Conditional:
                 return self._map_conditional(sv_stmt)
             
             # For loop
-            elif stmt_kind == pyslang.StatementKind.ForLoop:
+            elif stmt_kind == pyslang.ast.StatementKind.ForLoop:
                 return self._map_for_loop(sv_stmt)
             
             # While/do-while loop
-            elif stmt_kind in (pyslang.StatementKind.WhileLoop, pyslang.StatementKind.DoWhileLoop):
+            elif stmt_kind in (pyslang.ast.StatementKind.WhileLoop, pyslang.ast.StatementKind.DoWhileLoop):
                 return self._map_while_loop(sv_stmt)
 
             # Forever loop
-            elif stmt_kind == pyslang.StatementKind.ForeverLoop:
+            elif stmt_kind == pyslang.ast.StatementKind.ForeverLoop:
                 return self._map_forever_loop(sv_stmt)
             
             # Break statement
-            elif stmt_kind == pyslang.StatementKind.Break:
+            elif stmt_kind == pyslang.ast.StatementKind.Break:
                 return StmtBreak()
             
             # Continue statement
-            elif stmt_kind == pyslang.StatementKind.Continue:
+            elif stmt_kind == pyslang.ast.StatementKind.Continue:
                 return StmtContinue()
             
             # Block (list of statements)
-            elif stmt_kind == pyslang.StatementKind.Block:
+            elif stmt_kind == pyslang.ast.StatementKind.Block:
                 return self._map_block(sv_stmt)
             
             # Statement list
-            elif stmt_kind == pyslang.StatementKind.List:
+            elif stmt_kind == pyslang.ast.StatementKind.List:
                 return self._map_statement_list(sv_stmt)
             
             else:
@@ -163,7 +160,7 @@ class StmtMapper:
             expr_kind = sv_expr.kind if hasattr(sv_expr, 'kind') else None
             
             # Check if it's an assignment
-            if expr_kind == pyslang.ExpressionKind.Assignment:
+            if expr_kind == pyslang.ast.ExpressionKind.Assignment:
                 return self._map_assignment(sv_expr)
             
             # Otherwise, it's just an expression statement

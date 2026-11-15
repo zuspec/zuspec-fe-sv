@@ -38,17 +38,17 @@ def _compile(src: str):
     """
     sm = pyslang.SourceManager()
     sm.addUserDirectories(SHARE)
-    comp = pyslang.Compilation()
+    comp = pyslang.ast.Compilation()
     trees = []
     for f in _LIB_FILES:
-        t = pyslang.SyntaxTree.fromFile(f, sm)
+        t = pyslang.syntax.SyntaxTree.fromFile(f, sm)
         trees.append(t)
         comp.addSyntaxTree(t)
     with tempfile.NamedTemporaryFile(suffix='.sv', mode='w', delete=False) as f:
         f.write(src)
         tmp = f.name
     try:
-        t = pyslang.SyntaxTree.fromFile(tmp, sm)
+        t = pyslang.syntax.SyntaxTree.fromFile(tmp, sm)
         trees.append(t)
         comp.addSyntaxTree(t)
     finally:
@@ -59,7 +59,7 @@ def _compile(src: str):
 def _find_class(root, name: str):
     found = []
     def visit(sym):
-        if sym.kind == pyslang.SymbolKind.ClassType and getattr(sym, 'name', '') == name:
+        if sym.kind == pyslang.ast.SymbolKind.ClassType and getattr(sym, 'name', '') == name:
             found.append(sym)
         return True
     root.visit(visit)

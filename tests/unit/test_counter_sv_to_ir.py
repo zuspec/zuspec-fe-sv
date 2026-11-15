@@ -12,7 +12,14 @@ from zuspec.ir.core.expr import (
 EXAMPLES_DIR = os.path.normpath(
     os.path.join(os.path.dirname(__file__), '..', '..', '..', '..', 'examples', '01_counter')
 )
-COUNTER_PKG = os.path.join(EXAMPLES_DIR, 'counter_pkg.sv')
+COUNTER_PKG = os.path.join(
+    os.environ.get('ZSP_COUNTER_EXAMPLES_DIR', EXAMPLES_DIR), 'counter_pkg.sv')
+
+# The example lives outside this package (zuspec-examples layout); skip when
+# this checkout does not have it.
+pytestmark = pytest.mark.skipif(
+    not os.path.isfile(COUNTER_PKG),
+    reason=f"counter example not found: {COUNTER_PKG}")
 
 
 def _get_component(mapper: SVMapper, name: str) -> DataTypeComponent:

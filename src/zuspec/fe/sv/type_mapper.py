@@ -4,11 +4,6 @@ This module handles mapping of SystemVerilog types to Zuspec IR types.
 Only 2-state types are supported.
 """
 from typing import Optional
-import sys
-import os
-
-# Add packages to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
 from zuspec.ir.core.data_type import (
     DataTypeInt,

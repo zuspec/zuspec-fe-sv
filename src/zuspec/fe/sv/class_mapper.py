@@ -1,10 +1,7 @@
 """Class mapping from SystemVerilog to Zuspec IR."""
 from typing import Optional, List
-import sys
-import os
 import pyslang
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
 from zuspec.ir.core.data_type import DataTypeClass, DataTypeComponent, DataTypeAction, Process
 from zuspec.ir.core.fields import Field, SignalDirection
@@ -46,7 +43,7 @@ class ClassMapper:
         self.error_reporter = error_reporter
         self.type_mapper = type_mapper
         self.function_mapper = function_mapper
-        # pyslang.Compilation — needed for attribute queries (zsp_output etc.)
+        # pyslang.ast.Compilation — needed for attribute queries (zsp_output etc.)
         self.compilation = compilation
 
     # ------------------------------------------------------------------
@@ -113,7 +110,7 @@ class ClassMapper:
     def _field_is_rand(self, prop_sym) -> bool:
         """True if the property has ``rand`` qualifier."""
         try:
-            return prop_sym.randMode == pyslang.RandMode.Rand
+            return prop_sym.randMode == pyslang.ast.RandMode.Rand
         except Exception:
             return False
 
@@ -141,9 +138,9 @@ class ClassMapper:
             for sym in class_sym:
                 if sym.name in _SKIP_MEMBER_NAMES:
                     continue
-                if sym.kind == pyslang.SymbolKind.TransparentMember:
+                if sym.kind == pyslang.ast.SymbolKind.TransparentMember:
                     continue
-                if sym.kind == pyslang.SymbolKind.ClassProperty:
+                if sym.kind == pyslang.ast.SymbolKind.ClassProperty:
                     f = self._map_action_property(sym)
                     if f is not None:
                         fields.append(f)
@@ -203,7 +200,7 @@ class ClassMapper:
     def _map_type_allow_4state(self, sv_type):
         """Map a slang type to Zuspec IR type, accepting 4-state (logic) types."""
         try:
-            if isinstance(sv_type, pyslang.IntegralType):
+            if isinstance(sv_type, pyslang.ast.IntegralType):
                 width = int(sv_type.bitWidth) if hasattr(sv_type, 'bitWidth') else None
                 signed = bool(sv_type.isSigned) if hasattr(sv_type, 'isSigned') else False
                 return DataTypeInt(bits=width or 1, signed=signed)
@@ -229,9 +226,9 @@ class ClassMapper:
             for sym in class_sym:
                 if sym.name in _SKIP_MEMBER_NAMES:
                     continue
-                if sym.kind == pyslang.SymbolKind.TransparentMember:
+                if sym.kind == pyslang.ast.SymbolKind.TransparentMember:
                     continue
-                if sym.kind == pyslang.SymbolKind.ClassProperty:
+                if sym.kind == pyslang.ast.SymbolKind.ClassProperty:
                     if self._is_zsp_reg_field(sym):
                         bits, signed = self.type_mapper.map_zsp_reg_width(sym)
                         f = Field(
@@ -253,10 +250,10 @@ class ClassMapper:
             for sym in class_sym:
                 if sym.name in _SKIP_MEMBER_NAMES:
                     continue
-                if sym.kind == pyslang.SymbolKind.TransparentMember:
+                if sym.kind == pyslang.ast.SymbolKind.TransparentMember:
                     continue
-                if sym.kind == pyslang.SymbolKind.Subroutine:
-                    if (sym.subroutineKind == pyslang.SubroutineKind.Task
+                if sym.kind == pyslang.ast.SymbolKind.Subroutine:
+                    if (sym.subroutineKind == pyslang.ast.SubroutineKind.Task
                             and sym.name == 'run'):
                         body = []
                         if self.function_mapper and sym.body is not None:
@@ -310,7 +307,7 @@ class ClassMapper:
         fields = []
         try:
             for sym in class_symbol:
-                if sym.kind == pyslang.SymbolKind.ClassProperty:
+                if sym.kind == pyslang.ast.SymbolKind.ClassProperty:
                     field = self._map_property_field(sym)
                     if field:
                         fields.append(field)
@@ -345,7 +342,7 @@ class ClassMapper:
     def _map_type(self, sv_type):
         """Map a slang type to Zuspec IR type."""
         try:
-            if isinstance(sv_type, pyslang.IntegralType):
+            if isinstance(sv_type, pyslang.ast.IntegralType):
                 width = int(sv_type.bitWidth) if hasattr(sv_type, 'bitWidth') else None
                 signed = bool(sv_type.isSigned) if hasattr(sv_type, 'isSigned') else None
                 type_str = str(sv_type)

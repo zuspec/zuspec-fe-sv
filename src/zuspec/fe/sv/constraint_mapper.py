@@ -147,7 +147,7 @@ class ConstraintMapper:
         blocks: List[ActionConstraintBlock] = []
 
         for sym in class_sym:
-            if sym.kind != pyslang.SymbolKind.ConstraintBlock:
+            if sym.kind != pyslang.ast.SymbolKind.ConstraintBlock:
                 continue
             try:
                 block = self._map_constraint_block(sym, input_field)
@@ -185,14 +185,14 @@ class ConstraintMapper:
         for sym in class_sym:
             if sym.name in self._SKIP:
                 continue
-            if sym.kind != pyslang.SymbolKind.ClassProperty:
+            if sym.kind != pyslang.ast.SymbolKind.ClassProperty:
                 continue
             try:
                 vtype = sym.type
-                if not isinstance(vtype, pyslang.IntegralType):
+                if not isinstance(vtype, pyslang.ast.IntegralType):
                     continue
                 width = int(vtype.bitWidth) if hasattr(vtype, 'bitWidth') else 1
-                is_rand = sym.randMode == pyslang.RandMode.Rand
+                is_rand = sym.randMode == pyslang.ast.RandMode.Rand
                 is_out = self._is_output_attr(sym)
                 result.append(SVFieldInfo(
                     name=sym.name,

@@ -1,10 +1,7 @@
 """Expression mapping from SystemVerilog to Zuspec IR."""
 from typing import Optional
-import sys
-import os
 import pyslang
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
 from zuspec.ir.core.expr import (
     Expr,
@@ -71,23 +68,23 @@ class ExprMapper:
                 self.error_reporter.error(f"Unknown expression type: {type(sv_expr)}")
                 return None
             
-            if expr_kind == pyslang.ExpressionKind.BinaryOp:
+            if expr_kind == pyslang.ast.ExpressionKind.BinaryOp:
                 return self._map_binary_op(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.UnaryOp:
+            elif expr_kind == pyslang.ast.ExpressionKind.UnaryOp:
                 return self._map_unary_op(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.IntegerLiteral:
+            elif expr_kind == pyslang.ast.ExpressionKind.IntegerLiteral:
                 return self._map_integer_literal(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.StringLiteral:
+            elif expr_kind == pyslang.ast.ExpressionKind.StringLiteral:
                 return self._map_string_literal(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.NamedValue:
+            elif expr_kind == pyslang.ast.ExpressionKind.NamedValue:
                 return self._map_named_value(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.MemberAccess:
+            elif expr_kind == pyslang.ast.ExpressionKind.MemberAccess:
                 return self._map_member_access(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.ElementSelect:
+            elif expr_kind == pyslang.ast.ExpressionKind.ElementSelect:
                 return self._map_element_select(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.Call:
+            elif expr_kind == pyslang.ast.ExpressionKind.Call:
                 return self._map_call(sv_expr)
-            elif expr_kind == pyslang.ExpressionKind.Conversion:
+            elif expr_kind == pyslang.ast.ExpressionKind.Conversion:
                 return self._map_conversion(sv_expr)
             else:
                 self.error_reporter.error(f"Unsupported expression kind: {expr_kind}")
@@ -108,10 +105,10 @@ class ExprMapper:
             op_str = str(sv_expr.op)
             
             # Check for 4-state operators
-            if sv_expr.op in (pyslang.BinaryOperator.CaseEquality,
-                              pyslang.BinaryOperator.CaseInequality,
-                              pyslang.BinaryOperator.WildcardEquality,
-                              pyslang.BinaryOperator.WildcardInequality):
+            if sv_expr.op in (pyslang.ast.BinaryOperator.CaseEquality,
+                              pyslang.ast.BinaryOperator.CaseInequality,
+                              pyslang.ast.BinaryOperator.WildcardEquality,
+                              pyslang.ast.BinaryOperator.WildcardInequality):
                 self.error_reporter.error(
                     f"4-state operator not supported: {op_str}",
                     suggestion="Use 2-state operators (==, !=)"
@@ -229,7 +226,7 @@ class ExprMapper:
             sym = sv_expr.symbol
             name = sym.name
             # If this is a class property that's in our field context, emit a field ref
-            if (sym.kind == pyslang.SymbolKind.ClassProperty
+            if (sym.kind == pyslang.ast.SymbolKind.ClassProperty
                     and name in self._field_context):
                 idx = self._field_context[name]
                 return ExprRefField(base=TypeExprRefSelf(), index=idx)
@@ -283,14 +280,14 @@ class ExprMapper:
         try:
             # Method call on a field: count.write(...) / count.read()
             tc = getattr(sv_expr, 'thisClass', None)
-            if tc is not None and tc.kind == pyslang.ExpressionKind.NamedValue:
+            if tc is not None and tc.kind == pyslang.ast.ExpressionKind.NamedValue:
                 sym = tc.symbol
-                if (sym.kind == pyslang.SymbolKind.ClassProperty
+                if (sym.kind == pyslang.ast.SymbolKind.ClassProperty
                         and sym.name in self._field_context):
                     idx = self._field_context[sym.name]
                     receiver = ExprRefField(base=TypeExprRefSelf(), index=idx)
                     method_name = sv_expr.subroutine.name
-                    is_task = sv_expr.subroutine.subroutineKind == pyslang.SubroutineKind.Task
+                    is_task = sv_expr.subroutine.subroutineKind == pyslang.ast.SubroutineKind.Task
                     args = [self.map_expression(a) for a in sv_expr.arguments]
                     args = [a for a in args if a is not None]
                     call = ExprCall(

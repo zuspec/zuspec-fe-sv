@@ -1,4 +1,8 @@
-"""SystemVerilog parser wrapper using slang library."""
+"""SystemVerilog parser wrapper using slang library.
+
+Written against the pyslang 12 namespaced API (``pyslang.syntax`` /
+``pyslang.ast``).
+"""
 from typing import List, Optional
 import os
 import pyslang
@@ -24,7 +28,7 @@ class SVParser:
     def __init__(self, config: SVToZuspecConfig, error_reporter: ErrorReporter):
         self.config = config
         self.error_reporter = error_reporter
-        self.compilation: Optional[pyslang.Compilation] = None
+        self.compilation: Optional[pyslang.ast.Compilation] = None
     
     def parse_files(self, file_paths: List[str]) -> bool:
         """Parse SystemVerilog files, pre-loading the zsp library.
@@ -41,18 +45,18 @@ class SVParser:
             for d in self.config.include_dirs:
                 sm.addUserDirectories(d)
 
-            self.compilation = pyslang.Compilation()
+            self.compilation = pyslang.ast.Compilation()
             # Keep strong references to all SyntaxTree objects so they aren't
             # garbage-collected (the C++ compilation holds raw pointers into them).
             self._trees = []
 
             for lib_path in _LIB_FILES:
-                t = pyslang.SyntaxTree.fromFile(lib_path, sm)
+                t = pyslang.syntax.SyntaxTree.fromFile(lib_path, sm)
                 self._trees.append(t)
                 self.compilation.addSyntaxTree(t)
 
             for file_path in file_paths:
-                t = pyslang.SyntaxTree.fromFile(file_path, sm)
+                t = pyslang.syntax.SyntaxTree.fromFile(file_path, sm)
                 self._trees.append(t)
                 self.compilation.addSyntaxTree(t)
 
@@ -79,10 +83,12 @@ class SVParser:
         """
         try:
             # Create compilation
-            self.compilation = pyslang.Compilation()
+            self.compilation = pyslang.ast.Compilation()
             
             # Add source text
-            tree = pyslang.SyntaxTree.fromText(text, file_name)
+            tree = pyslang.syntax.SyntaxTree.fromText(text, file_name)
+            # Keep a strong reference: the C++ compilation holds raw pointers.
+            self._trees = [tree]
             self.compilation.addSyntaxTree(tree)
             
             # Check for diagnostics
@@ -104,7 +110,7 @@ class SVParser:
             self.error_reporter.error(f"Parser error: {str(e)}")
             return False
     
-    def get_root(self) -> Optional[pyslang.RootSymbol]:
+    def get_root(self) -> Optional[pyslang.ast.RootSymbol]:
         """Get the root symbol of the compilation."""
         if self.compilation:
             return self.compilation.getRoot()

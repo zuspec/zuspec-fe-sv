@@ -1,10 +1,7 @@
 """Main SV to Zuspec IR mapper orchestrator."""
 from typing import List, Optional
-import sys
-import os
 import pyslang
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../../../packages/zuspec-dataclasses/src'))
 
 from zuspec.ir.core.data_type import DataTypeClass, DataTypeComponent, DataTypeAction
 from zuspec.fe.sv.parser import SVParser
@@ -59,7 +56,7 @@ class SVMapper:
         sv_classes = []
 
         def visitor(symbol):
-            if symbol.kind == pyslang.SymbolKind.ClassType:
+            if symbol.kind == pyslang.ast.SymbolKind.ClassType:
                 if not _is_library_class(symbol):
                     sv_classes.append(symbol)
             return True
