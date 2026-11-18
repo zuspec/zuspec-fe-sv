@@ -215,15 +215,37 @@ def test_map_named_value(mapper):
     assert isinstance(ir_expr, ExprRefLocal)
 
 
+@pytest.mark.parametrize("op,cmp", [("===", "CaseEq"), ("!==", "CaseNotEq")])
+def test_map_case_equality(mapper, op, cmp):
+    """``===``/``!==`` map to ``CmpOp.CaseEq``/``CaseNotEq``."""
+    from zuspec.ir.core import CmpOp
+    expr_mapper, error_reporter = mapper
+    parser = SVParser(SVToZuspecConfig(), error_reporter)
+    parser.parse_text(f"""
+    class test;
+        function bit check(logic [3:0] a, logic [3:0] b);
+            return a {op} b;
+        endfunction
+    endclass
+    """)
+    found = []
+    parser.get_root().visit(lambda s: (str(getattr(s, 'kind', '')) == 'ExpressionKind.BinaryOp'
+                                        and found.append(s)) or True)
+    assert found
+    ir_expr = expr_mapper.map_expression(found[0])
+    assert not error_reporter.has_errors()
+    assert ir_expr.op == getattr(CmpOp, cmp)
+
+
 def test_reject_4state_equality(mapper):
-    """Test that 4-state equality operators are rejected."""
+    """Test that wildcard equality operators are rejected."""
     expr_mapper, error_reporter = mapper
     parser = SVParser(SVToZuspecConfig(), error_reporter)
     
     code = """
     class test;
         function bit check(int a, int b);
-            return a === b;
+            return a ==? b;
         endfunction
     endclass
     """

@@ -8,14 +8,15 @@ class SVToZuspecConfig:
     """Configuration for SV to Zuspec translation.
     
     Note: Some features are always errors regardless of configuration:
-    - 4-state types (logic, reg, integer) 
-    - 4-state operators (===, !==)
     - Modules
     - Interfaces
+
+    4-state types (logic, reg, integer) map to ``DataTypeInt`` with
+    ``four_state`` set.
     """
     
     strict_mode: bool = True
-    """Error on unsupported constructs (always true for 4-state/modules)"""
+    """Error on unsupported constructs (always true for modules)"""
     
     ignore_covergroups: bool = True
     """Skip covergroup definitions"""
@@ -27,7 +28,7 @@ class SVToZuspecConfig:
     """Patterns to ignore (identifiers, not constructs)"""
     
     warn_only: bool = False
-    """Warn instead of error (doesn't apply to critical features like 4-state)"""
+    """Warn instead of error (doesn't apply to modules)"""
 
     include_dirs: List[str] = field(default_factory=list)
     """Additional include directories for SV preprocessing"""

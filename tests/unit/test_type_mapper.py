@@ -92,51 +92,35 @@ def test_longint_type(mapper):
     assert not error_reporter.has_errors()
 
 
-def test_logic_type_error(mapper):
-    """Test that logic type generates an error."""
+def test_logic_type_four_state(mapper):
+    """``logic`` maps to a 4-state DataTypeInt (F8a)."""
     type_mapper, error_reporter = mapper
-    
-    result = type_mapper.map_builtin_type('logic', file_path='test.sv', line=10)
-    
-    assert result is None
-    assert error_reporter.has_errors()
-    
-    errors = error_reporter.get_errors()
-    assert len(errors) == 1
-    assert '4-state type' in errors[0].message
-    assert 'logic' in errors[0].message
-    assert 'bit' in errors[0].suggestion
+
+    result = type_mapper.map_builtin_type('logic', width=32, file_path='test.sv', line=10)
+
+    assert result == DataTypeInt(bits=32, signed=False, four_state=True)
+    assert type_mapper.map_builtin_type('logic').bits == 1
+    assert not error_reporter.has_errors()
 
 
-def test_reg_type_error(mapper):
-    """Test that reg type generates an error."""
+def test_reg_type_four_state(mapper):
+    """``reg`` maps to a 4-state DataTypeInt."""
     type_mapper, error_reporter = mapper
-    
+
     result = type_mapper.map_builtin_type('reg')
-    
-    assert result is None
-    assert error_reporter.has_errors()
-    
-    errors = error_reporter.get_errors()
-    assert len(errors) == 1
-    assert '4-state type' in errors[0].message
-    assert 'reg' in errors[0].message
+
+    assert result == DataTypeInt(bits=1, signed=False, four_state=True)
+    assert not error_reporter.has_errors()
 
 
-def test_integer_type_error(mapper):
-    """Test that integer type generates an error."""
+def test_integer_type_four_state(mapper):
+    """``integer`` maps to a 32-bit signed 4-state DataTypeInt."""
     type_mapper, error_reporter = mapper
-    
+
     result = type_mapper.map_builtin_type('integer')
-    
-    assert result is None
-    assert error_reporter.has_errors()
-    
-    errors = error_reporter.get_errors()
-    assert len(errors) == 1
-    assert '4-state type' in errors[0].message
-    assert 'integer' in errors[0].message
-    assert 'int' in errors[0].suggestion
+
+    assert result == DataTypeInt(bits=32, signed=True, four_state=True)
+    assert not error_reporter.has_errors()
 
 
 def test_case_insensitive(mapper):

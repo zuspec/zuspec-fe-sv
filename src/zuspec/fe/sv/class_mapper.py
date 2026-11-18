@@ -225,7 +225,8 @@ class ClassMapper:
             if isinstance(sv_type, pyslang.ast.IntegralType):
                 width = int(sv_type.bitWidth) if hasattr(sv_type, 'bitWidth') else None
                 signed = bool(sv_type.isSigned) if hasattr(sv_type, 'isSigned') else False
-                return DataTypeInt(bits=width or 1, signed=signed)
+                return DataTypeInt(bits=width or 1, signed=signed,
+                                   four_state=True if getattr(sv_type, "isFourState", False) else None)
             self.error_reporter.error(f"Unsupported action field type: {sv_type}")
             return None
         except Exception as e:
@@ -372,13 +373,6 @@ class ClassMapper:
             field_name = property_symbol.name
             var_type = property_symbol.type
 
-            if hasattr(var_type, 'isFourState') and var_type.isFourState:
-                self.error_reporter.error(
-                    f"Field '{field_name}' uses 4-state type",
-                    suggestion="Use 2-state types (bit, int, byte, etc.)",
-                )
-                return None
-
             ir_type = self._map_type(var_type)
             if ir_type is None:
                 return None
@@ -410,6 +404,10 @@ class ClassMapper:
             if self._tparams and type(sv_type).__name__ == "TypeAliasType" \
                     and str(sv_type) in self._tparams:
                 return DataTypeRef(ref_name=self._tparams[str(sv_type)])
+            if type(sv_type).__name__ == "TypeAliasType" and _type_param_alias(sv_type):
+                # In a specialization, ``T`` is its actual type
+                # (``put_if #(byte)``); its alias name is one per generic.
+                return self._map_type(sv_type.targetType.type, quiet)
             if type(sv_type).__name__ in ("TypeAliasType", "EnumType", "PackedStructType"):
                 return self.type_mapper.map_type(sv_type)
             if type(sv_type).__name__ == "QueueType":
@@ -424,9 +422,12 @@ class ClassMapper:
                 signed = bool(sv_type.isSigned) if hasattr(sv_type, 'isSigned') else None
                 type_str = str(sv_type)
                 type_name = type_str.split('[')[0].strip() if '[' in type_str else type_str
-                return self.type_mapper.map_builtin_type(
+                t = self.type_mapper.map_builtin_type(
                     type_name=type_name, width=width, signed=signed,
                 )
+                if t is not None and bool(getattr(sv_type, "isFourState", False)):
+                    t.four_state = True
+                return t
             if quiet:
                 self.error_reporter.warning(f"Unsupported type: {sv_type}")
             else:
@@ -568,6 +569,11 @@ def _default_specialization(generic_sym):
     method that takes a scope, so call its getter directly."""
     fget = type(generic_sym).__dict__["defaultSpecialization"].fget
     return fget(generic_sym, generic_sym.parentScope)
+
+
+def _type_param_alias(t) -> bool:
+    from zuspec.fe.sv.type_mapper import _type_param_alias as f
+    return f(t)
 
 
 def _alias_name(spec, name: str) -> str:

@@ -103,3 +103,68 @@ def test_generic_api(mapped):
     # map_generic_class keeps mapping it to the plain protocol
     assert isinstance(mapped.class_mapper.map_generic_class(
         _generic(mapped, "api_if")), DataTypeProtocol)
+
+
+SPEC_SRC = """
+package scenario;
+  typedef struct packed { bit [7:0] a; } test_pkt_t;
+  interface class test_put_if #(type T = int);
+    pure virtual task put(input T t);
+  endclass
+  interface class mem_if #(type ADDR = logic [31:0], type DATA = logic [7:0]);
+    pure virtual task wr(input ADDR a, input DATA d);
+  endclass
+  class c;
+    test_put_if#(byte) a;
+    test_put_if#(test_pkt_t) b;
+    test_put_if#(logic [3:0]) l;
+  endclass
+endpackage
+"""
+
+
+@pytest.fixture(scope="module")
+def spec_mapped():
+    m = SVMapper()
+    assert m.map_text(SPEC_SRC, "s.sv"), m.get_error_report()
+    return m
+
+
+def _member_types(m):
+    out = {}
+
+    def visitor(sym):
+        if sym.kind == pyslang.ast.SymbolKind.ClassProperty:
+            out[sym.name] = sym.type
+        return True
+    m.parser.get_root().visit(visitor)
+    return out
+
+
+def test_specialization_maps_actual_args(spec_mapped):
+    """F8a: a specialization's methods take its actual argument types, not
+    the type parameter's alias (``scenario::test_put_if::T``, one name per
+    generic, so ``#(byte)`` and ``#(test_pkt_t)`` collided)."""
+    from zuspec.ir.core.data_type import DataTypeInt
+    cm = spec_mapped.class_mapper
+    ts = _member_types(spec_mapped)
+    arg = {}
+    for n in ("a", "b", "l"):
+        p = cm.map_protocol(ts[n], str(ts[n]))
+        arg[n] = p.methods[0].args.args[0].datatype
+    assert arg["a"] == DataTypeInt(bits=8, signed=True)
+    assert isinstance(arg["b"], DataTypeRef) and arg["b"].ref_name == "scenario::test_pkt_t"
+    assert arg["l"].bits == 4 and arg["l"].four_state is True
+    assert not any(k.endswith("::T") for k in spec_mapped.get_types())
+    assert not spec_mapped.has_errors(), spec_mapped.get_error_report()
+
+
+def test_generic_api_four_state_defaults(spec_mapped):
+    """F8a: ``type ADDR = logic [31:0]`` keeps its default, 4-state."""
+    tmpl = spec_mapped.class_mapper.map_generic_api(_generic(spec_mapped, "mem_if"))
+    d = {p.name: p.default_value for p in tmpl.template_params}
+    assert d["ADDR"].bits == 32 and d["ADDR"].four_state is True
+    assert d["DATA"].bits == 8 and d["DATA"].four_state is True
+    args = tmpl.body.methods[0].args.args
+    assert [a.datatype.ref_name for a in args] == ["ADDR", "DATA"]
+    assert not spec_mapped.has_errors(), spec_mapped.get_error_report()

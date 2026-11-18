@@ -69,24 +69,22 @@ def test_map_multiple_classes():
     assert 'my_seq' in class_names
 
 
-def test_map_with_4state_error():
-    """Test that 4-state types generate proper errors."""
+def test_map_with_4state():
+    """A 4-state field maps, with ``four_state`` set (F8a)."""
     mapper = SVMapper()
-    
+
     code = """
-    class bad_class;
+    class four_class;
         logic [31:0] data;
+        integer n;
     endclass
     """
-    
-    result = mapper.map_text(code)
-    
-    # Should fail due to 4-state type
-    assert result is False
-    assert mapper.has_errors()
-    
-    report = mapper.get_error_report()
-    assert '4-state' in report
+
+    assert mapper.map_text(code), mapper.get_error_report()
+    cls = next(c for c in mapper.get_classes() if c.name == "four_class")
+    ft = {f.name: f.datatype for f in cls.fields}
+    assert ft["data"].four_state is True and ft["data"].bits == 32
+    assert ft["n"].four_state is True and ft["n"].signed
 
 
 def test_map_mixed_2state_types():

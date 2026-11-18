@@ -106,11 +106,12 @@ def test_anonymous_enum_and_struct(cls, tm):
 
 def test_four_state_typedef(cls, tm):
     m, er = tm
-    assert m.map_type(_ftype(cls, "f8")) is None
-    assert er.has_errors()
+    assert m.map_type(_ftype(cls, "f8")) == DataTypeRef(ref_name="p::l_t")
+    assert not er.has_errors()
+    assert m.types["p::l_t"].four_state is True
     m2 = TypeMapper(SVToZuspecConfig(), ErrorReporter())
-    assert m2.map_type(_ftype(cls, "f8"), allow_4state=True) == DataTypeRef(ref_name="p::l_t")
-    assert m2.types["p::l_t"].four_state is True
+    assert m2.map_type(_ftype(cls, "f8"), allow_4state=False) is None
+    assert m2.error_reporter.has_errors()
 
 
 def test_class_fields_use_named_types():

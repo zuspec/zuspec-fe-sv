@@ -1,7 +1,8 @@
 """Type mapping from SystemVerilog to Zuspec IR.
 
 This module handles mapping of SystemVerilog types to Zuspec IR types.
-Only 2-state types are supported.
+A 4-state type (``logic``, ``reg``, ``integer``) is a ``DataTypeInt`` with
+``four_state`` set.
 """
 from typing import Dict, Optional
 
@@ -21,9 +22,8 @@ from zuspec.fe.sv.config import SVToZuspecConfig
 class TypeMapper:
     """Maps SystemVerilog types to Zuspec IR types.
     
-    Only supports 2-state types:
-    - bit, int, byte, shortint, longint (supported)
-    - logic, reg, integer (error - 4-state)
+    - bit, int, byte, shortint, longint: 2-state
+    - logic, reg, integer: 4-state (``DataTypeInt.four_state``)
     """
     
     def __init__(self, config: SVToZuspecConfig, error_reporter: ErrorReporter):
@@ -36,16 +36,21 @@ class TypeMapper:
         #: another typedef, a named ``DataTypeRef`` to it.
         self.types: Dict[str, DataType] = {}
 
-    def map_type(self, sv_type, allow_4state: bool = False) -> Optional[DataType]:
+    def map_type(self, sv_type, allow_4state: bool = True) -> Optional[DataType]:
         """Map a slang type to Zuspec IR.
 
         A typedef maps to a ``DataTypeRef`` to its entry in :attr:`types`
-        (mapped once); an anonymous packed struct or enum maps to the
-        ``DataTypeStruct``/``DataTypeEnum`` itself; any other integral type
-        to a ``DataTypeInt``. A 4-state type is an error unless
-        *allow_4state* (then ``four_state`` is set). None on error."""
+        (mapped once); a type parameter's alias in a specialization
+        (``T`` in ``put_if #(byte)``) maps as its actual type; an anonymous
+        packed struct or enum maps to the ``DataTypeStruct``/
+        ``DataTypeEnum`` itself; any other integral type to a
+        ``DataTypeInt``, with ``four_state`` set from the type (``logic``,
+        ``reg``, ``integer``: True). A 4-state type is an error only when
+        *allow_4state* is False. None on error."""
         kind = type(sv_type).__name__
         if kind == "TypeAliasType":
+            if _type_param_alias(sv_type):
+                return self.map_type(sv_type.targetType.type, allow_4state)
             return self._map_typedef(sv_type, allow_4state)
         if kind == "EnumType":
             return self._map_enum(sv_type, None, allow_4state)
@@ -149,17 +154,14 @@ class TypeMapper:
         if sign_kw is not None:
             signed = sign_kw
 
-        # Check for 4-state types (always error)
-        if type_name_lower in ['logic', 'reg', 'integer']:
-            self.error_reporter.error(
-                f"4-state type '{type_name}' not supported",
-                file_path=file_path,
-                line=line,
-                column=column,
-                context=f"{type_name}",
-                suggestion=self._suggest_2state_replacement(type_name_lower),
-            )
-            return None
+        # 4-state types: ``four_state`` is set
+        if type_name_lower in ['logic', 'reg']:
+            bits = width if width is not None else 1
+            is_signed = signed if signed is not None else False
+            return DataTypeInt(bits=bits, signed=is_signed, four_state=True)
+        if type_name_lower == 'integer':
+            return DataTypeInt(bits=32, signed=True if signed is None else signed,
+                               four_state=True)
         
         # Map 2-state types
         if type_name_lower == 'bit':
@@ -213,3 +215,12 @@ class TypeMapper:
     def is_4state_type(self, type_name: str) -> bool:
         """Check if a type name is a 4-state type."""
         return type_name.lower() in ['logic', 'reg', 'integer']
+
+
+def _type_param_alias(t) -> bool:
+    """Whether slang alias type ``t`` is a type parameter's alias (``T`` in
+    a specialization of ``put_if #(type T)``) rather than a typedef: its
+    name is one key per generic, so it is mapped by its value."""
+    p = getattr(t, "parentScope", None)
+    m = p.find(t.name) if p is not None else None
+    return type(m).__name__ == "TypeParameterSymbol"

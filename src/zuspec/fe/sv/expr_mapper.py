@@ -112,14 +112,13 @@ class ExprMapper:
             
             op_str = str(sv_expr.op)
             
-            # Check for 4-state operators
-            if sv_expr.op in (pyslang.ast.BinaryOperator.CaseEquality,
-                              pyslang.ast.BinaryOperator.CaseInequality,
-                              pyslang.ast.BinaryOperator.WildcardEquality,
+            # Wildcard equality (``==?``/``!=?``) has no IR op. Case
+            # equality (``===``/``!==``) maps to ``CmpOp.CaseEq``/``CaseNotEq``.
+            if sv_expr.op in (pyslang.ast.BinaryOperator.WildcardEquality,
                               pyslang.ast.BinaryOperator.WildcardInequality):
                 self.error_reporter.error(
                     f"4-state operator not supported: {op_str}",
-                    suggestion="Use 2-state operators (==, !=)"
+                    suggestion="Use ==, !=, === or !=="
                 )
                 return None
             
@@ -177,6 +176,8 @@ class ExprMapper:
             # Comparisons - use CmpOp (we'll need ExprCompare for these)
             'BinaryOperator.Equality': CmpOp.Eq,
             'BinaryOperator.Inequality': CmpOp.NotEq,
+            'BinaryOperator.CaseEquality': CmpOp.CaseEq,
+            'BinaryOperator.CaseInequality': CmpOp.CaseNotEq,
             'BinaryOperator.LessThan': CmpOp.Lt,
             'BinaryOperator.LessThanEqual': CmpOp.LtE,
             'BinaryOperator.GreaterThan': CmpOp.Gt,

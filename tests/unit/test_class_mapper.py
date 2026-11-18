@@ -121,8 +121,8 @@ def test_map_class_with_inheritance(mappers):
     assert not error_reporter.has_errors()
 
 
-def test_map_class_with_logic_field_error(mappers):
-    """Test that logic fields generate errors."""
+def test_map_class_with_logic_field(mappers):
+    """A logic field maps to a 4-state DataTypeInt (F8a)."""
     parser, class_mapper, error_reporter = mappers
     
     code = """
@@ -148,10 +148,9 @@ def test_map_class_with_logic_field_error(mappers):
     assert len(classes) == 1
     ir_class = class_mapper.map_class(classes[0])
     
-    # Should have error about 4-state type
-    assert error_reporter.has_errors()
-    errors = error_reporter.get_errors()
-    assert any('4-state' in e.message for e in errors)
+    assert not error_reporter.has_errors(), error_reporter.report()
+    f = {f.name: f.datatype for f in ir_class.fields}["data"]
+    assert f.bits == 32 and f.four_state is True
 
 
 def test_map_empty_class(mappers):
