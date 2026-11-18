@@ -5,11 +5,42 @@ import pyslang
 
 from zuspec.ir.core.data_type import Function
 from zuspec.ir.core.stmt import Arguments, Arg
+from zuspec.ir.core.base import Annotation
+from zuspec.ir.core.fields import SignalDirection
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.type_mapper import TypeMapper
 from zuspec.fe.sv.expr_mapper import ExprMapper
 from zuspec.fe.sv.stmt_mapper import StmtMapper
+
+
+# Methods slang declares on every class
+_BUILTIN_METHODS = frozenset({
+    'randomize', 'pre_randomize', 'post_randomize',
+    'get_randstate', 'set_randstate', 'srandom',
+    'rand_mode', 'constraint_mode',
+})
+
+_ARG_DIRECTIONS = {
+    'In': SignalDirection.INPUT,
+    'Out': SignalDirection.OUTPUT,
+    'InOut': SignalDirection.INOUT,
+    'Ref': SignalDirection.INOUT,
+}
+
+
+def sv_annotations(compilation, sym) -> List[Annotation]:
+    """The SV attributes on ``sym`` (``(* fw_opt *)``, ``(* n = 2 *)``) as
+    IR annotations: ``type_qname`` is the attribute's name, ``values`` holds
+    its value under ``"value"`` (1 when the attribute has none)."""
+    if compilation is None:
+        return []
+    from zuspec.fe.sv.module_header import _value
+    try:
+        return [Annotation(type_qname=a.name, values={"value": _value(a.value)})
+                for a in compilation.getAttributes(sym)]
+    except Exception:
+        return []
 
 
 class FunctionMapper:
@@ -36,6 +67,12 @@ class FunctionMapper:
         self.type_mapper = type_mapper
         self.expr_mapper = expr_mapper
         self.stmt_mapper = stmt_mapper
+        #: Maps a slang type to IR for argument and return types; the class
+        #: mapper sets it (so type parameters and classes resolve). When
+        #: None, only integral return types are mapped.
+        self.type_fn = None
+        #: pyslang.ast.Compilation, for attributes; set by the SV mapper.
+        self.compilation = None
     
     def map_function(self, sv_func) -> Optional[Function]:
         """Map a SystemVerilog function or task to Zuspec IR.
@@ -63,6 +100,8 @@ class FunctionMapper:
                 ret_type = sv_func.returnType
                 if hasattr(ret_type, 'isVoid') and ret_type.isVoid:
                     returns = None
+                elif self.type_fn is not None:
+                    returns = self.type_fn(ret_type)
                 else:
                     # Map the return type
                     returns = self._map_return_type(ret_type)
@@ -83,7 +122,7 @@ class FunctionMapper:
                     metadata['virtual'] = True
             
             # Create Function
-            return Function(
+            func = Function(
                 name=func_name,
                 args=args,
                 body=body,
@@ -94,6 +133,8 @@ class FunctionMapper:
                 process_kind=None,
                 sensitivity_list=[],
             )
+            func.annotations = sv_annotations(self.compilation, sv_func)
+            return func
             
         except Exception as e:
             self.error_reporter.error(f"Error mapping function: {str(e)}")
@@ -118,13 +159,14 @@ class FunctionMapper:
                     arg_name = str(arg.name) if hasattr(arg, 'name') else "unnamed"
                     
                     # Get argument type annotation
-                    annotation = None
-                    if hasattr(arg, 'getType'):
-                        arg_type = arg.getType()
-                        # For now, we'll skip detailed type annotation
-                        # Just store the name
-                    
-                    args_list.append(Arg(arg=arg_name, annotation=annotation))
+                    datatype = None
+                    if self.type_fn is not None and hasattr(arg, 'type'):
+                        datatype = self.type_fn(arg.type)
+                    direction = _ARG_DIRECTIONS.get(
+                        str(getattr(arg, 'direction', '')).split('.')[-1])
+
+                    args_list.append(Arg(arg=arg_name, datatype=datatype,
+                                         direction=direction))
             
             # Create Arguments object
             # For simplicity, put all args in the 'args' list (positional)
@@ -194,7 +236,8 @@ class FunctionMapper:
             def visitor(symbol):
                 if hasattr(symbol, 'kind'):
                     kind_str = str(symbol.kind)
-                    if kind_str == 'SymbolKind.Subroutine':
+                    if kind_str == 'SymbolKind.Subroutine' \
+                            and symbol.name not in _BUILTIN_METHODS:
                         func = self.map_function(symbol)
                         if func:
                             functions.append(func)

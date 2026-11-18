@@ -247,3 +247,52 @@ def test_reject_4state_equality(mapper):
         assert error_reporter.has_errors()
         errors = error_reporter.get_errors()
         assert any('4-state' in e.message for e in errors)
+
+
+def _first(text, kind):
+    reporter = ErrorReporter()
+    parser = SVParser(SVToZuspecConfig(), reporter)
+    parser.parse_text(text)
+    found = []
+
+    def visitor(symbol):
+        if str(getattr(symbol, 'kind', '')) == kind:
+            found.append(symbol)
+        return True
+    parser.get_root().visit(visitor)
+    assert found
+    return found[0]
+
+
+def test_map_logical_and_or(mapper):
+    """`&&` and `||` map to ExprBool."""
+    from zuspec.ir.core.expr import BoolOp, ExprBool
+    expr_mapper, error_reporter = mapper
+    e = _first("""
+    class test;
+        function bit f(bit a, bit b, bit c);
+            return a && (b || c);
+        endfunction
+    endclass
+    """, 'ExpressionKind.BinaryOp')
+    ir_expr = expr_mapper.map_expression(e)
+    assert not error_reporter.has_errors()
+    assert isinstance(ir_expr, ExprBool) and ir_expr.op == BoolOp.And
+    assert isinstance(ir_expr.values[1], ExprBool) and ir_expr.values[1].op == BoolOp.Or
+
+
+def test_map_conditional(mapper):
+    """`c ? a : b` maps to ExprIfExp."""
+    from zuspec.ir.core.expr import ExprIfExp
+    expr_mapper, error_reporter = mapper
+    e = _first("""
+    class test;
+        function int f(bit c, int a, int b);
+            return c ? a : b;
+        endfunction
+    endclass
+    """, 'ExpressionKind.ConditionalOp')
+    ir_expr = expr_mapper.map_expression(e)
+    assert not error_reporter.has_errors()
+    assert isinstance(ir_expr, ExprIfExp)
+    assert [x.name for x in (ir_expr.test, ir_expr.body, ir_expr.orelse)] == ["c", "a", "b"]

@@ -111,7 +111,7 @@ def compile(files: Sequence[str] = (), incdirs: Sequence[str] = (),
             defines: Optional[Mapping[str, Optional[str]]] = None,
             extra_text: Optional[Mapping[str, str]] = None,
             include_text: Optional[Mapping[str, str]] = None,
-            check: bool = False) -> CompileResult:
+            check: bool = False, timescale: Optional[str] = None) -> CompileResult:
     """Compile SystemVerilog sources.
 
     :param files: source files, compiled in order (one compilation unit each).
@@ -122,6 +122,8 @@ def compile(files: Sequence[str] = (), incdirs: Sequence[str] = (),
     :param include_text: ``{name: text}`` in-memory include files, found by
         ```include "name"`` from any source.
     :param check: raise :class:`CompileError` if there are errors.
+    :param timescale: the time scale (``"1ns/1ps"``) of design elements
+        that declare none, so files with and without ```timescale`` mix.
     :returns: a :class:`CompileResult`, which unpacks as
         ``(compilation, diagnostics)``.
     """
@@ -145,8 +147,12 @@ def compile(files: Sequence[str] = (), incdirs: Sequence[str] = (),
     pp.additionalIncludePaths = inc_paths
     bag = pyslang.Bag()
     bag.preprocessorOptions = pp
+    if timescale is not None:
+        co = ast.CompilationOptions()
+        co.defaultTimeScale = pyslang.TimeScale.fromString(timescale)
+        bag.compilationOptions = co
 
-    comp = ast.Compilation()
+    comp = ast.Compilation(bag)
     trees = []
     for path in files:
         trees.append(syntax.SyntaxTree.fromFile(path, sm, bag))

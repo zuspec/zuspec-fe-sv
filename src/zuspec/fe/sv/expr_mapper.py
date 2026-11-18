@@ -18,9 +18,15 @@ from zuspec.ir.core.expr import (
     BinOp,
     UnaryOp,
     CmpOp,
+    BoolOp,
+    ExprBool,
+    ExprIfExp,
 )
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
+
+_LOGICAL = {'BinaryOperator.LogicalAnd': BoolOp.And,
+            'BinaryOperator.LogicalOr': BoolOp.Or}
 
 
 class ExprMapper:
@@ -86,6 +92,8 @@ class ExprMapper:
                 return self._map_call(sv_expr)
             elif expr_kind == pyslang.ast.ExpressionKind.Conversion:
                 return self._map_conversion(sv_expr)
+            elif expr_kind == pyslang.ast.ExpressionKind.ConditionalOp:
+                return self._map_conditional(sv_expr)
             else:
                 self.error_reporter.error(f"Unsupported expression kind: {expr_kind}")
                 return None
@@ -115,6 +123,13 @@ class ExprMapper:
                 )
                 return None
             
+            if op_str in _LOGICAL:
+                left = self.map_expression(sv_expr.left)
+                right = self.map_expression(sv_expr.right)
+                if left is None or right is None:
+                    return None
+                return ExprBool(op=_LOGICAL[op_str], values=[left, right])
+
             # Map operator to Zuspec
             zuspec_op = self._map_binary_operator(op_str)
             if zuspec_op is None:
@@ -133,6 +148,19 @@ class ExprMapper:
             self.error_reporter.error(f"Error mapping binary op: {str(e)}")
             return None
     
+    def _map_conditional(self, sv_expr) -> Optional[ExprIfExp]:
+        """Map ``c ? a : b`` (one plain condition, no ``matches``)."""
+        conds = list(sv_expr.conditions)
+        if len(conds) != 1 or conds[0].pattern is not None:
+            self.error_reporter.error("Unsupported conditional: pattern or multiple conditions")
+            return None
+        test = self.map_expression(conds[0].expr)
+        body = self.map_expression(sv_expr.left)
+        orelse = self.map_expression(sv_expr.right)
+        if test is None or body is None or orelse is None:
+            return None
+        return ExprIfExp(test=test, body=body, orelse=orelse)
+
     def _map_binary_operator(self, op_str: str):
         """Map SystemVerilog binary operator to Zuspec."""
         op_map = {

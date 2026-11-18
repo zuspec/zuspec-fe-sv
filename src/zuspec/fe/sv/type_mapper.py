@@ -3,14 +3,17 @@
 This module handles mapping of SystemVerilog types to Zuspec IR types.
 Only 2-state types are supported.
 """
-from typing import Optional
+from typing import Dict, Optional
 
 from zuspec.ir.core.data_type import (
+    DataType,
     DataTypeInt,
+    DataTypeRef,
     DataTypeString,
     DataTypeEnum,
     DataTypeStruct,
 )
+from zuspec.ir.core.fields import Field
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 
@@ -26,7 +29,88 @@ class TypeMapper:
     def __init__(self, config: SVToZuspecConfig, error_reporter: ErrorReporter):
         self.config = config
         self.error_reporter = error_reporter
-    
+        #: Typedefs mapped so far, by qualified name (``p::s_t``,
+        #: ``p::cls::loc_t``), in the order first mapped. A typedef of a
+        #: packed struct or enum is that ``DataTypeStruct`` (``packed``) or
+        #: ``DataTypeEnum``; of an integral type, a named ``DataTypeInt``; of
+        #: another typedef, a named ``DataTypeRef`` to it.
+        self.types: Dict[str, DataType] = {}
+
+    def map_type(self, sv_type, allow_4state: bool = False) -> Optional[DataType]:
+        """Map a slang type to Zuspec IR.
+
+        A typedef maps to a ``DataTypeRef`` to its entry in :attr:`types`
+        (mapped once); an anonymous packed struct or enum maps to the
+        ``DataTypeStruct``/``DataTypeEnum`` itself; any other integral type
+        to a ``DataTypeInt``. A 4-state type is an error unless
+        *allow_4state* (then ``four_state`` is set). None on error."""
+        kind = type(sv_type).__name__
+        if kind == "TypeAliasType":
+            return self._map_typedef(sv_type, allow_4state)
+        if kind == "EnumType":
+            return self._map_enum(sv_type, None, allow_4state)
+        if kind == "PackedStructType":
+            return self._map_struct(sv_type, None, allow_4state)
+        if bool(getattr(sv_type, "isIntegral", False)):
+            return self._map_integral(sv_type, allow_4state)
+        self.error_reporter.error(f"Unsupported type: {sv_type}")
+        return None
+
+    def _map_typedef(self, alias, allow_4state: bool) -> Optional[DataType]:
+        name = str(alias)
+        if name not in self.types:
+            target = alias.targetType.type
+            kind = type(target).__name__
+            if kind == "EnumType":
+                t = self._map_enum(target, name, allow_4state)
+            elif kind == "PackedStructType":
+                t = self._map_struct(target, name, allow_4state)
+            elif kind == "TypeAliasType":
+                if self._map_typedef(target, allow_4state) is None:
+                    return None
+                t = DataTypeRef(name=name, ref_name=str(target))
+            else:
+                t = self.map_type(target, allow_4state)
+                if isinstance(t, DataTypeInt):
+                    t.name = name
+            if t is None:
+                return None
+            self.types[name] = t
+        return DataTypeRef(ref_name=name)
+
+    def _map_enum(self, sv_type, name, allow_4state: bool) -> Optional[DataTypeEnum]:
+        from zuspec.fe.sv.interp.values import const_to_py
+        base = self._map_integral(sv_type.baseType, allow_4state)
+        if base is None:
+            return None
+        items = {m.name: const_to_py(m.value, sv_type) for m in sv_type
+                 if type(m).__name__ == "EnumValueSymbol"}
+        return DataTypeEnum(name=name, items=items, width=int(sv_type.bitWidth),
+                            base_type=base)
+
+    def _map_struct(self, sv_type, name, allow_4state: bool) -> Optional[DataTypeStruct]:
+        fields = []
+        for m in sv_type:
+            if type(m).__name__ != "FieldSymbol":
+                continue
+            ft = self.map_type(m.type, allow_4state)
+            if ft is None:
+                return None
+            fields.append(Field(name=m.name, datatype=ft))
+        return DataTypeStruct(name=name, super=None, packed=True, fields=fields)
+
+    def _map_integral(self, sv_type, allow_4state: bool) -> Optional[DataTypeInt]:
+        width = int(sv_type.bitWidth)
+        signed = bool(sv_type.isSigned)
+        if bool(getattr(sv_type, "isFourState", False)):
+            if not allow_4state:
+                self.error_reporter.error(
+                    f"4-state type '{sv_type}' not supported",
+                    suggestion=self._suggest_2state_replacement("logic"))
+                return None
+            return DataTypeInt(bits=width, signed=signed, four_state=True)
+        return DataTypeInt(bits=width, signed=signed, four_state=False)
+
     def map_builtin_type(
         self,
         type_name: str,
@@ -50,7 +134,21 @@ class TypeMapper:
             DataTypeInt if successful, None on error
         """
         type_name_lower = type_name.lower()
-        
+        # ``int unsigned``, ``byte signed``: the keyword sets the sign
+        sign_kw = None
+        for kw in (' unsigned', ' signed'):
+            if type_name_lower.endswith(kw):
+                type_name_lower = type_name_lower[:-len(kw)].strip()
+                sign_kw = kw == ' signed'
+                break
+        if sign_kw is not None and type_name_lower in (
+                'byte', 'shortint', 'int', 'longint'):
+            bits = {'byte': 8, 'shortint': 16, 'int': 32,
+                    'longint': 64}[type_name_lower]
+            return DataTypeInt(bits=bits, signed=sign_kw)
+        if sign_kw is not None:
+            signed = sign_kw
+
         # Check for 4-state types (always error)
         if type_name_lower in ['logic', 'reg', 'integer']:
             self.error_reporter.error(

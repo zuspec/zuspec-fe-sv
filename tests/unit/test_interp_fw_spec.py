@@ -26,7 +26,8 @@ pytestmark = pytest.mark.skipif(not os.path.isfile(SMOKE),
 
 
 def _compile(top_text):
-    files = [os.path.join(API, "fw_hdl_pkg.sv"), SMOKE]
+    files = [os.path.join(API, "fw_hdl_pkg.sv"),
+             os.path.join(SPEC, "std", "fw_hdl_std_pkg.sv"), SMOKE]
     first = compile(files, incdirs=[API])
     stubs = extern_stub_bodies(first.trees, ["fw_hdl_pkg"])["fw_hdl_pkg"]
     res = compile(files, incdirs=[API],

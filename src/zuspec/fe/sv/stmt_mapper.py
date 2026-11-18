@@ -238,13 +238,15 @@ class StmtMapper:
             
             # Map then body
             body = []
-            if hasattr(first_cond, 'stmt') and first_cond.stmt:
-                body = self.map_statements(first_cond.stmt)
+            then_stmt = getattr(sv_stmt, 'ifTrue', None) or getattr(first_cond, 'stmt', None)
+            if then_stmt:
+                body = self.map_statements(then_stmt)
             
             # Map else body
             orelse = []
-            if hasattr(sv_stmt, 'elseClause') and sv_stmt.elseClause:
-                orelse = self.map_statements(sv_stmt.elseClause)
+            else_stmt = getattr(sv_stmt, 'ifFalse', None) or getattr(sv_stmt, 'elseClause', None)
+            if else_stmt:
+                orelse = self.map_statements(else_stmt)
             
             return StmtIf(test=test_expr, body=body, orelse=orelse)
             

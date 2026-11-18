@@ -91,6 +91,26 @@ else:
     print(mapper.get_error_report())
 ```
 
+Besides `get_classes()`, the mapper returns `get_templates()` (parameterized
+classes), `get_protocols()` (interface classes) and `get_types()`: the named
+types (typedefs) by qualified name (`p::s_t`), each after the types it uses.
+Package-scope typedefs are included even when no class uses them.
+
+### SV -> IR -> SV round trip
+
+With zuspec-be-sv installed, a mapped package can be emitted back to SV:
+
+```python
+from zuspec.be.sv.ir.core_to_sv import translate_package
+from zuspec.be.sv.ir.sv_emit import SVEmitter
+
+decls = mapper.get_classes() + mapper.get_templates() + mapper.get_protocols()
+sv = SVEmitter().emit_one(translate_package("my_pkg", mapper.get_types(), decls))
+```
+
+`tests/unit/test_sv_round_trip.py` checks this on an AXI4-sized package: the
+output lints in Verilator, re-maps to an equal IR, and re-emits unchanged.
+
 ## Running Tests
 
 ```bash
