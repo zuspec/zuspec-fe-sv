@@ -124,6 +124,8 @@ def test_class_fields_use_named_types():
     assert not er.has_errors(), er.report()
     ft = {f.name: f.datatype for f in ir.fields}
     assert ft["f1"] == DataTypeRef(ref_name="p::s_t")
-    assert ft["f2"] == DataTypeRef(ref_name="p::c::loc_t")
+    # a class-scope typedef is the class's own (followups §18, Q20)
+    assert ft["f2"] == DataTypeRef(ref_name="loc_t")
+    assert [td.name for td in ir.typedefs] == ["loc_t"]
     assert isinstance(ft["f7"], DataTypeStruct)
-    assert set(tmap.types) == {"p::e_t", "p::s_t", "p::c::loc_t", "p::byte_t", "p::s2_t"}
+    assert set(tmap.types) == {"p::e_t", "p::s_t", "p::byte_t", "p::s2_t"}

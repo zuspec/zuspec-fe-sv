@@ -11,7 +11,9 @@ from zuspec.ir.core.data_type import (
     TemplateParamKind, TemplateParamType, TemplateParamValue,
     TemplateArgType, TemplateArgValue,
 )
-from zuspec.ir.core.expr import ExprConstant
+from zuspec.ir.core.expr import (
+    ExprConstant, ExprRefUnresolved, ExprStructField, ExprStructLiteral)
+from zuspec.ir.core.data_type import DataTypeMemberRef, TypeDef
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.type_mapper import TypeMapper
@@ -52,6 +54,13 @@ class ClassMapper:
         self.function_mapper = function_mapper
         if function_mapper is not None:
             function_mapper.type_fn = self._map_sig_type
+            function_mapper.decl_type_fn = self._map_arg_type
+            sm = getattr(function_mapper, "stmt_mapper", None)
+            if sm is not None:
+                sm.type_fn = self._map_sig_type
+                if getattr(sm, "expr_mapper", None) is not None:
+                    sm.expr_mapper.type_fn = self._map_sig_type
+        type_mapper.class_local = self._map_class_local
         # pyslang.ast.Compilation — needed for attribute queries (zsp_output etc.)
         self.compilation = compilation
         #: Parameterized classes mapped so far, by generic-class name.
@@ -67,6 +76,11 @@ class ClassMapper:
         # its widths are read in.
         self._tparams = None
         self._body_scope = None
+        # The classes being mapped (``p::cls``), innermost last: a typedef
+        # of one of them is referred to by its local name.
+        self._cls_stack: List[str] = []
+        # The scope type syntax is looked up in (the class being mapped).
+        self._scope = None
 
     # ------------------------------------------------------------------
     # Predicates
@@ -317,10 +331,17 @@ class ClassMapper:
             return None
 
     def _map_plain_class(self, class_symbol, class_name) -> DataTypeClass:
+        with self._in_class(class_symbol):
+            ir_class = self._map_plain_class_body(class_symbol, class_name)
+        ir_class.annotations = sv_annotations(self.compilation, class_symbol)
+        return ir_class
+
+    def _map_plain_class_body(self, class_symbol, class_name) -> DataTypeClass:
         base = getattr(class_symbol, "baseClass", None)
         ir_class = DataTypeClass(
             name=class_name,
             super=self._map_type(base) if base is not None else None)
+        ir_class.typedefs = self._map_typedefs(class_symbol)
         # An implemented interface by its (generic) class name; the
         # arguments of a parameterized interface are not kept.
         ir_class.implements = [
@@ -343,15 +364,239 @@ class ClassMapper:
         virtual methods (slang ``MethodPrototype`` members)."""
         if name in self.protocols:
             return self.protocols[name]
-        methods = []
-        for m in class_symbol:
-            if m.kind == pyslang.ast.SymbolKind.MethodPrototype and self.function_mapper:
-                f = self.function_mapper.map_function(m)
-                if f is not None:
-                    methods.append(f)
-        proto = DataTypeProtocol(name=name, methods=methods)
+        with self._in_class(class_symbol):
+            typedefs = self._map_typedefs(class_symbol)
+            methods = []
+            for m in class_symbol:
+                if m.kind == pyslang.ast.SymbolKind.MethodPrototype and self.function_mapper:
+                    f = self.function_mapper.map_function(m)
+                    if f is not None:
+                        methods.append(f)
+        proto = DataTypeProtocol(name=name, methods=methods, typedefs=typedefs)
+        proto.annotations = sv_annotations(self.compilation, class_symbol)
         self.protocols[name] = proto
         return proto
+
+    # ------------------------------------------------------------------
+    # Class-scope types (followups §18, Q20)
+    # ------------------------------------------------------------------
+
+    def _in_class(self, class_symbol):
+        """Context: ``class_symbol`` (a class or a specialization) is being
+        mapped; its typedefs are referred to by their local names."""
+        import contextlib
+        mapper = self
+
+        @contextlib.contextmanager
+        def ctx():
+            mapper._cls_stack.append(_class_qname(class_symbol))
+            saved = mapper._scope
+            mapper._scope = class_symbol
+            try:
+                yield
+            finally:
+                mapper._scope = saved
+                mapper._cls_stack.pop()
+        return ctx()
+
+    def _map_typedefs(self, class_symbol) -> List[TypeDef]:
+        """A class's typedefs, in source order."""
+        out = []
+        for m in class_symbol:
+            if m.kind != pyslang.ast.SymbolKind.TypeAlias or _type_param_alias(m):
+                continue
+            dt = self._map_typedef_target(m)
+            if dt is None:
+                self.error_reporter.warning(f"typedef {m.name}: type not mapped")
+                continue
+            out.append(TypeDef(name=m.name, datatype=dt))
+        return out
+
+    def _map_typedef_target(self, alias):
+        """The type a class-scope typedef names: from its syntax where
+        that keeps more (``axi4_types #(P)``), else its resolved type; a
+        struct's or integral type's widths over the class parameters."""
+        tt = alias.targetType
+        t, ts = tt.type, tt.typeSyntax
+        r = self._map_tsyn(ts, t)
+        if r is not None:
+            return r
+        kind = type(t).__name__
+        if kind == "PackedStructType":
+            s = self.type_mapper._map_struct(t, None, True)
+            if s is not None and ts is not None and ts.kind.name == "StructType":
+                self._struct_widths(s, t, ts)
+            return s
+        if kind == "EnumType":
+            return self.type_mapper._map_enum(t, None, True)
+        r = self._map_type(t)
+        if isinstance(r, DataTypeInt) and ts is not None and self._body_scope is not None:
+            from zuspec.fe.sv.module_header import width_expr
+            e = width_expr(ts, t, self._body_scope)
+            r.width_expr = None if e is None or isinstance(e, ExprConstant) else e
+        return r
+
+    def _struct_widths(self, s, t, ts):
+        """Set each integral member's ``width_expr`` from its syntax."""
+        if self._body_scope is None:
+            return
+        from zuspec.fe.sv.module_header import width_expr
+        syn = {}
+        for mem in ts.members:
+            for d in mem.declarators:
+                syn[d.name.valueText] = mem.type
+        sym = {f.name: f for f in t if type(f).__name__ == "FieldSymbol"}
+        for f in s.fields:
+            if isinstance(f.datatype, DataTypeInt) and f.name in syn and f.name in sym:
+                e = width_expr(syn[f.name], sym[f.name].type, self._body_scope)
+                f.datatype.width_expr = (None if e is None or isinstance(e, ExprConstant)
+                                         else e)
+
+    def _map_class_local(self, alias):
+        """A class-scope typedef used by a type: its local name in its own
+        class, else a ``DataTypeMemberRef`` into its class (through the
+        class's default specialization when the class is generic)."""
+        owner, _, name = str(alias).rpartition("::")
+        if owner in self._cls_stack:
+            return DataTypeRef(ref_name=name)
+        base = self._class_ref(owner)
+        if base is None:
+            return None
+        return DataTypeMemberRef(base=base, member=name)
+
+    def _class_ref(self, qname):
+        pkg, _, cls = qname.rpartition("::")
+        sym = None
+        try:
+            p = self.compilation.getPackage(pkg) if (self.compilation and pkg) else None
+            sym = p.find(cls) if p is not None else None
+        except Exception:
+            sym = None
+        if sym is None:
+            return DataTypeRef(ref_name=cls)
+        if sym.kind == pyslang.ast.SymbolKind.GenericClassDef:
+            return self.map_specialization(_default_specialization(sym))
+        return DataTypeRef(ref_name=cls)
+
+    def _map_decl_type(self, t, ts):
+        """A declaration's type: from its syntax where that keeps more,
+        else from the resolved type."""
+        r = self._map_tsyn(ts, t)
+        return r if r is not None else self._map_type(t)
+
+    def _map_arg_type(self, arg):
+        dt = getattr(arg, "declaredType", None)
+        ts = getattr(dt, "typeSyntax", None) if dt is not None else None
+        r = self._map_tsyn(ts, arg.type)
+        return r if r is not None else self._map_sig_type(arg.type)
+
+    def _map_tsyn(self, ts, t):
+        """Map a named type from its syntax: ``cls #(args)``, ``x::member``.
+        None to fall back to the resolved type (a plain name, a keyword
+        type, or anything not understood)."""
+        if ts is None or self._scope is None or ts.kind.name != "NamedType":
+            return None
+        try:
+            return self._map_name_syn(ts.name, t)
+        except Exception as e:
+            self.error_reporter.warning(f"type {str(ts).strip()}: {e}")
+            return None
+
+    def _map_name_syn(self, n, t):
+        from zuspec.fe.sv.module_header import _lookup
+        k = n.kind.name
+        if k == "ScopedName" and n.right.kind.name == "IdentifierName":
+            left = n.left
+            if left.kind.name == "IdentifierName":
+                m = _lookup(self._scope, left.identifier.valueText)
+                if m is None or m.kind.name != "TypeAlias" or _type_param_alias(m):
+                    return None          # a package, or a type parameter
+                owner = str(m).rpartition("::")[0]
+                if owner not in self._cls_stack:
+                    return None
+                base = DataTypeRef(ref_name=m.name)
+            elif left.kind.name == "ClassName":
+                base = self._map_class_name(left, None)
+            else:
+                return None
+            if base is None:
+                return None
+            return DataTypeMemberRef(base=base, member=n.right.identifier.valueText)
+        # ``cls #(P)`` in a template body: its arguments as written (outside
+        # one, the resolved specialization says the same)
+        if (k == "ClassName" and type(t).__name__ == "ClassType"
+                and self._body_scope is not None):
+            return self._map_class_name(n, t)
+        return None
+
+    def _map_class_name(self, n, t):
+        """``cls #(args)`` as a ``DataTypeSpecialized``: a value argument
+        as written over the enclosing parameters (``P``), a type argument
+        mapped from its syntax or its resolved type (from ``t``, the
+        resolved class, when known). Every parameter gets an argument: one
+        not written takes its resolved value, else the template's
+        default."""
+        from zuspec.fe.sv.module_header import _lookup, _xlate
+        g = _lookup(self._scope, n.identifier.valueText)
+        if g is not None and getattr(g, "genericClass", None) is not None:
+            g = g.genericClass       # found as a specialization (the default)
+        if g is None or g.kind != pyslang.ast.SymbolKind.GenericClassDef:
+            return None
+        tmpl = (self.map_generic_api(g) if getattr(g, "isInterface", False)
+                else self.map_generic_class(g))
+        if not isinstance(tmpl, DataTypeParameterized):
+            return None
+        resolved = {}
+        if t is not None:
+            for m in t:
+                if getattr(m, "isPortParam", False):
+                    resolved[m.name] = m
+        from zuspec.fe.sv.module_header import _items
+        assigns = _items(n.parameters.parameters) if n.parameters is not None else []
+        params = tmpl.template_params
+        given = {}
+        for i, a in enumerate(assigns):
+            if a.kind.name == "OrderedParamAssignment":
+                if i >= len(params):
+                    return None
+                given[params[i].name] = a.expr
+            elif a.kind.name == "NamedParamAssignment":
+                given[a.name.valueText] = a.expr
+            else:
+                return None
+        args = []
+        for p in params:
+            e = given.get(p.name)
+            if isinstance(p, TemplateParamValue):
+                rv = resolved.get(p.name)
+                if e is not None:
+                    v = _xlate(e, self._scope)
+                elif rv is not None:
+                    v = _param_value(rv.value, rv.type)
+                else:
+                    v = p.default_value
+                if v is None:
+                    return None
+                args.append(TemplateArgValue(param_name=p.name, value_expr=v))
+            elif isinstance(p, TemplateParamType):
+                tv = None
+                rt = resolved.get(p.name)
+                rtype = rt.targetType.type if rt is not None else None
+                if e is not None and e.kind.name in ("ScopedName", "ClassName"):
+                    tv = self._map_name_syn(e, rtype)
+                if tv is None and rtype is not None:
+                    tv = self._map_type(rtype)
+                if tv is None and e is None:
+                    tv = p.default_value
+                if tv is None:
+                    return None
+                args.append(TemplateArgType(param_name=p.name, type_value=tv))
+            else:
+                return None
+        return DataTypeSpecialized(name=tmpl.name, base_template=tmpl,
+                                   template_args=args,
+                                   specialized_name=str(t) if t is not None
+                                   else str(n).strip())
 
     def _map_fields(self, class_symbol) -> Optional[List[Field]]:
         """Map plain class fields."""
@@ -373,7 +618,9 @@ class ClassMapper:
             field_name = property_symbol.name
             var_type = property_symbol.type
 
-            ir_type = self._map_type(var_type)
+            dt = getattr(property_symbol, "declaredType", None)
+            ir_type = self._map_decl_type(
+                var_type, getattr(dt, "typeSyntax", None) if dt is not None else None)
             if ir_type is None:
                 return None
             if self._body_scope is not None and isinstance(ir_type, DataTypeInt):
@@ -473,6 +720,7 @@ class ClassMapper:
                 tmpl.body = self._map_plain_class(spec, name)
             finally:
                 self._tparams, self._body_scope = saved
+            tmpl.annotations = sv_annotations(self.compilation, generic_sym)
             return tmpl
         except Exception as e:
             self.error_reporter.error(f"Error mapping parameterized class {name}: {e}")
@@ -496,7 +744,7 @@ class ClassMapper:
                 params.append(TemplateParamValue(
                     name=m.name, kind=TemplateParamKind.VALUE,
                     value_type=self._map_type(m.type),
-                    default_value=_const(m.value)))
+                    default_value=_param_default(m)))
         return params, tparams
 
     def map_generic_api(self, generic_sym) -> Optional[DataTypeParameterized]:
@@ -509,13 +757,14 @@ class ClassMapper:
         try:
             spec = _default_specialization(generic_sym)
             params, tparams = self._template_params(spec)
-            saved = self._tparams
-            self._tparams = tparams
+            saved = (self._tparams, self._body_scope)
+            self._tparams, self._body_scope = tparams, spec
             try:
                 body = self.map_protocol(spec, name)
             finally:
-                self._tparams = saved
+                self._tparams, self._body_scope = saved
             tmpl = DataTypeParameterized(name=name, template_params=params, body=body)
+            tmpl.annotations = sv_annotations(self.compilation, generic_sym)
             self.api_templates[name] = tmpl
             return tmpl
         except Exception as e:
@@ -545,7 +794,8 @@ class ClassMapper:
                     args.append(TemplateArgType(param_name=m.name,
                                                 type_value=self._map_type(m.targetType.type)))
                 elif m.kind == pyslang.ast.SymbolKind.Parameter:
-                    args.append(TemplateArgValue(param_name=m.name, value_expr=_const(m.value)))
+                    args.append(TemplateArgValue(param_name=m.name,
+                                                 value_expr=_param_value(m.value, m.type)))
         finally:
             self._tparams, self._body_scope = saved
         sp = DataTypeSpecialized(name=tmpl.name, base_template=tmpl,
@@ -582,7 +832,69 @@ def _alias_name(spec, name: str) -> str:
         if getattr(spec.genericClass, "hierarchicalPath", None) else name
 
 
+def _param_default(param):
+    """A value parameter's default. A struct-valued one keeps a named
+    constant (``AXI4_PARAM_DEFAULT``) as a reference; any other struct
+    value becomes a member-by-member literal."""
+    init = getattr(param, "initializer", None)
+    if (_packed_struct(param.type) is not None and init is not None
+            and init.kind == pyslang.ast.ExpressionKind.NamedValue):
+        from zuspec.fe.sv.module_header import package_ref
+        return (package_ref(init.symbol)
+                or ExprRefUnresolved(name=init.symbol.name))
+    return _param_value(param.value, param.type)
+
+
+def _param_value(cv, t):
+    """A parameter value: a struct literal for a packed struct, else
+    ``_const``."""
+    st = _packed_struct(t)
+    if st is not None:
+        lit = _struct_literal(cv, st)
+        if lit is not None:
+            return lit
+    return _const(cv)
+
+
+def _packed_struct(t):
+    ct = getattr(t, "canonicalType", None)
+    return ct if (ct is not None and ct.kind == pyslang.ast.SymbolKind.PackedStructType) else None
+
+
+def _struct_literal(cv, st):
+    """``'{A: 4, B: 8}`` for a packed struct constant, members in
+    declaration order, or None when the value has X/Z bits. The value is
+    read as hex text and sliced here: printing it in decimal is
+    abbreviated for wide structs."""
+    try:
+        text = cv.value.toString(pyslang.LiteralBase.Hex, False)
+        bits = int(text.replace("_", ""), 16)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return _struct_fields(bits, st)
+
+
+def _struct_fields(bits, st):
+    fields = []
+    for f in st:
+        if f.kind != pyslang.ast.SymbolKind.Field:
+            continue
+        w = f.type.bitWidth
+        v = (bits >> f.bitOffset) & ((1 << w) - 1)
+        sub = _packed_struct(f.type)
+        fields.append(ExprStructField(
+            name=f.name,
+            value=_struct_fields(v, sub) if sub is not None else ExprConstant(value=v)))
+    return ExprStructLiteral(fields=fields)
+
+
 def _const(cv):
     """A parameter's constant value as an ``ExprConstant``."""
     from zuspec.fe.sv.module_header import _value
     return ExprConstant(value=_value(cv))
+
+
+def _class_qname(sym) -> str:
+    """``p::cls`` for a class or a specialization of a generic class."""
+    g = getattr(sym, "genericClass", None)
+    return (g if g is not None else sym).hierarchicalPath

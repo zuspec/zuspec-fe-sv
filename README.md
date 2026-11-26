@@ -92,24 +92,47 @@ else:
 ```
 
 Besides `get_classes()`, the mapper returns `get_templates()` (parameterized
-classes), `get_protocols()` (interface classes) and `get_types()`: the named
-types (typedefs) by qualified name (`p::s_t`), each after the types it uses.
-Package-scope typedefs are included even when no class uses them.
+classes), `get_protocols()` (interface classes), `get_api_templates()`
+(parameterized interface classes, as a `DataTypeParameterized` whose body is
+the protocol) and `get_types()`: the named types (typedefs) by qualified name
+(`p::s_t`), each after the types it uses. Package-scope typedefs are included
+even when no class uses them. `get_decls()` gives every declaration once, a
+parameterized interface class as its template, for an emitter.
+
+`get_packages()` gives each package as an IR `Package`: its imports,
+localparams (`PackageConst`), functions and declared types, in source order.
+
+A struct-valued class parameter keeps its default as written: a named
+constant becomes a reference (`P = AXI4_PARAM_DEFAULT`, an `ExprRefPackage`),
+anything else a member-by-member literal (`'{A: 1, B: 2}`).
+
+A typedef in a class stays in the class (`DataTypeClass.typedefs`,
+`DataTypeProtocol.typedefs`), written over the class's parameters: a width
+like `logic [w1(P.ID_W)-1:0]` keeps `P.ID_W` and the package function `w1`.
+In a parameterized class, `axi4_types #(P)` keeps `P`, and `t::aw_t` or
+`axi4_types #(P)::aw_t` is a `DataTypeMemberRef`. Attributes on classes,
+interface classes and struct members are kept as annotations.
 
 ### SV -> IR -> SV round trip
 
 With zuspec-be-sv installed, a mapped package can be emitted back to SV:
 
 ```python
-from zuspec.be.sv.ir.core_to_sv import translate_package
+from zuspec.be.sv.ir.core_to_sv import translate_ir_package
 from zuspec.be.sv.ir.sv_emit import SVEmitter
 
-decls = mapper.get_classes() + mapper.get_templates() + mapper.get_protocols()
-sv = SVEmitter().emit_one(translate_package("my_pkg", mapper.get_types(), decls))
+for pkg in mapper.get_packages():
+    sv = SVEmitter().emit_one(translate_ir_package(pkg, mapper.get_types(),
+                                                   mapper.get_decls()))
 ```
 
-`tests/unit/test_sv_round_trip.py` checks this on an AXI4-sized package: the
-output lints in Verilator, re-maps to an equal IR, and re-emits unchanged.
+(`translate_package(name, types, decls)` builds a package from types and
+declarations alone, without the package's constants and functions.)
+
+`tests/unit/test_sv_round_trip.py` checks this on an AXI4-sized package, and
+`tests/unit/test_sv_round_trip_axi4_core.py` on the real AXI4 core
+(`tests/unit/axi4_core/`, three packages): the output lints in Verilator,
+re-maps to an equal IR, and re-emits unchanged.
 
 ## Running Tests
 

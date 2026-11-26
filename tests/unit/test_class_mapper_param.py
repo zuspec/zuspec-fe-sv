@@ -6,7 +6,12 @@ from zuspec.ir.core.data_type import (
     DataTypeClass, DataTypeInt, DataTypeParameterized, DataTypeRef,
     DataTypeSpecialized, TemplateArgType, TemplateArgValue, TemplateParamKind,
     TemplateParamType, TemplateParamValue)
-from zuspec.ir.core.expr import ExprConstant, ExprRefParam
+from zuspec.ir.core.expr import (
+    ExprConstant, ExprRefParam, ExprStructField, ExprStructLiteral)
+
+_CFG_1_0 = ExprStructLiteral(fields=[
+    ExprStructField(name="a", value=ExprConstant(value=1)),
+    ExprStructField(name="b", value=ExprConstant(value=0))])
 
 SRC = """
 package p;
@@ -51,9 +56,10 @@ def test_template_params(mapped):
     assert isinstance(W, TemplateParamValue) and W.kind == TemplateParamKind.VALUE
     assert W.default_value == ExprConstant(value=4)
     assert W.value_type.bits == 32 and W.value_type.signed
-    # A struct-valued parameter: its type is the typedef, its value packed.
+    # A struct-valued parameter: its type is the typedef, its value a
+    # member-by-member literal.
     assert C.value_type == DataTypeRef(ref_name="p::cfg_t")
-    assert C.default_value == ExprConstant(value=0b10)
+    assert C.default_value == _CFG_1_0
 
 
 def test_template_body(mapped):
@@ -76,7 +82,7 @@ def test_specialization(mapped):
     assert isinstance(T, TemplateArgType) and T.type_value.bits == 16
     W = sp.get_template_arg("W")
     assert isinstance(W, TemplateArgValue) and W.value_expr == ExprConstant(value=8)
-    assert sp.get_template_arg_value("C") == ExprConstant(value=0b10)
+    assert sp.get_template_arg_value("C") == _CFG_1_0
     # The same specialization maps to one object.
     assert f["g2"] is sp
     assert list(mapped.get_specializations()) == [sp.specialized_name]

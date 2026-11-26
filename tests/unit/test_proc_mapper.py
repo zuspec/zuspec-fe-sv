@@ -5,9 +5,12 @@ import pytest
 
 from zuspec.fe.sv import class_from_typedef, compile, extern_stub_bodies
 from zuspec.fe.sv.proc_mapper import ProcMapper, field_index
-from zuspec.ir.core.expr import ExprBin, ExprRefField
+from zuspec.ir.core.data_type import DataTypeInt
+from zuspec.ir.core.expr import (ExprAttribute, ExprAwait, ExprBin, ExprCall,
+                                 ExprHierarchical, ExprRefField, ExprRefLocal)
+from zuspec.ir.core.fields import SignalDirection
 from zuspec.ir.core.proc_block import ExprInReset, ProcKind
-from zuspec.ir.core.stmt import StmtAssign, StmtIf
+from zuspec.ir.core.stmt import StmtAnnAssign, StmtAssign, StmtExpr, StmtIf, StmtWhile
 
 SPEC = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "..",
                                      "fw-hdl-spec"))
@@ -66,9 +69,46 @@ package p;
     virtual function void step(); g(); endfunction
     virtual task run(); b.write(1'b1); endtask
   endclass
+  class tk extends fw_component implements fw_step_if, fw_comb_if, fw_run_if;
+    `fw_component_utils(tk)
+    fw_input #(bit) i;
+    fw_output #(bit) a, b, y;
+    virtual function void step(); a.write(1'b0); endfunction
+    virtual function void comb(); y.write(i.read()); endfunction
+    task put(); a.write(1'b1); b.write(i.read()); endtask
+    virtual task run(); put(); y.write(1'b1); endtask
+  endclass
+  interface class api_if;
+    pure virtual task xfer(output int y, input int x);
+  endclass
+  class ho extends fw_component implements fw_run_if;
+    `fw_component_utils(ho)
+    fw_port #(api_if) p;
+    fw_from_sync #(int) q;
+    fw_to_sync   #(int) r;
+    virtual task run();
+      api_if i = p.get_if();
+      int x, y;
+      forever begin q.get(x); i.xfer(y, x); r.put(y); end
+    endtask
+  endclass
+  class hx extends fw_component implements api_if;
+    `fw_component_utils(hx)
+    fw_export #(api_if) t;
+    fw_to_sync   #(int) q;
+    fw_from_sync #(int) r;
+    virtual task xfer(output int y, input int x); q.put(x); r.get(y); endtask
+  endclass
+  class hb extends fw_component implements fw_run_if;
+    `fw_component_utils(hb)
+    fw_port #(api_if) p;
+    fw_from_sync #(int) q;
+    virtual task run(); int x; q.get(x); x = p.get_if() == null; endtask
+  endclass
 endpackage
 module __top; typedef p::cnt C; typedef p::two T; typedef p::multi M;
-  typedef p::badw B; typedef p::tm TM; endmodule
+  typedef p::badw B; typedef p::tm TM; typedef p::tk TK; typedef p::ho HO;
+  typedef p::hx HX; typedef p::hb HB; endmodule
 '''
 
 
@@ -144,6 +184,85 @@ def test_emit_run_and_time(comp):
     blocks, errs = _errs(comp, "TM")
     assert errs == [], errs
     assert blocks[0].writes == [["a"]]
+    assert (blocks[1].kind, blocks[1].writes) == (ProcKind.TASK, [["b"]])
     _, errs = _errs(comp, "TM", emit=True)
     codes = sorted(e.split(":")[0] for e in errs)
     assert codes == ["FW-E-EMIT-RUN", "FW-E-EMIT-TIME"], errs
+
+
+def test_emit_run_handoff(comp):
+    """A run() that only calls crossings and an API port (D7 of
+    docs/design/xtor-shell-plan.md) emits: it is the bridge's, and stays a
+    TASK block for check_xing; tm's run() writes a pin and does not."""
+    blocks, errs = _errs(comp, "HO", emit=True)
+    assert errs == [], errs
+    (t,) = [b for b in blocks if b.kind == ProcKind.TASK]
+    assert (t.name, t.writes, t.reads) == ("run", [], [])
+    assert [(list(u.path), u.method) for u in t.xing_uses] == [(["q"], "get"), (["r"], "put")]
+
+
+def _int(t):
+    return DataTypeInt(bits=32, signed=True) if getattr(t, "isIntegral", False) else None
+
+
+def _call(st):
+    """(receiver, method, args) of an awaited call statement."""
+    assert isinstance(st, StmtExpr) and isinstance(st.expr, ExprAwait), st
+    c = st.expr.value
+    assert isinstance(c, ExprCall) and isinstance(c.func, ExprAttribute), c
+    v = c.func.value
+    rcv = (v.index if isinstance(v, ExprRefField)
+           else [e.name for e in v.elements] if isinstance(v, ExprHierarchical) else v)
+    return rcv, c.func.attr, [a.name for a in c.args]
+
+
+def test_task_code_run(comp):
+    """T2 (xtor-shell-plan.md): run()'s code in the TASK block, crossing
+    calls awaited on the crossing field, i = p.get_if(); i.xfer(...) as
+    p.xfer(...) on the endpoint, i dropped."""
+    m = ProcMapper(type_fn=_int, fields={"q": 0, "r": 1})
+    blocks = m.map(class_from_typedef(comp, "__top", "HO"))
+    assert m.reporter.errors == [], m.reporter.report()
+    (t,) = blocks
+    assert t.args == []
+    decl = [s for s in t.body if isinstance(s, StmtAnnAssign)]
+    assert [d.target.name for d in decl] == ["x", "y"]
+    (w,) = [s for s in t.body if isinstance(s, StmtWhile)]
+    assert [_call(s) for s in w.body] == [(0, "get", ["x"]), (["p"], "xfer", ["y", "x"]),
+                                          (1, "put", ["y"])]
+
+
+def test_task_code_export(comp):
+    """An API task (an export's): its arguments, with direction and type."""
+    m = ProcMapper(type_fn=_int, fields={"q": 0, "r": 1})
+    blocks = m.map(class_from_typedef(comp, "__top", "HX"))
+    assert m.reporter.errors == [], m.reporter.report()
+    (t,) = blocks
+    assert t.name == "xfer"
+    assert [(a.arg, a.direction) for a in t.args] == [
+        ("y", SignalDirection.OUTPUT), ("x", SignalDirection.INPUT)]
+    assert all(isinstance(a.datatype, DataTypeInt) for a in t.args)
+    assert [_call(s) for s in t.body] == [(0, "put", ["x"]), (1, "get", ["y"])]
+
+
+def test_task_code_unmapped(comp):
+    """get_if() other than as an API local's value or a receiver: no body,
+    FW-W-TASK-MAP (a warning: the core still lowers)."""
+    m = ProcMapper(type_fn=_int, fields={"q": 0})
+    (t,) = m.map(class_from_typedef(comp, "__top", "HB"))
+    assert t.body == [] and not m.reporter.has_errors()
+    (w,) = m.reporter.get_warnings()
+    assert w.message.startswith("FW-W-TASK-MAP: hb.run: "), w.message
+
+
+def test_task_block(comp):
+    """run() and the task it calls: a TASK block with its code (run's own:
+    the call of put() and y's write), its reads and writes. A step block
+    and run() writing a (a default and a drive), and a comb block and
+    run() writing y, are left to check_xing."""
+    blocks, errs = _errs(comp, "TK")
+    assert errs == [], errs
+    (t,) = [b for b in blocks if b.kind == ProcKind.TASK]
+    assert (t.name, t.func, len(t.body)) == ("run", "run", 2)
+    assert sorted(t.writes) == [["a"], ["b"], ["y"]]
+    assert t.reads == [["i"]]

@@ -6,6 +6,11 @@ import pyslang
 from zuspec.ir.core.expr import (
     Expr,
     ExprBin,
+    ExprCompare,
+    ExprCast,
+    ExprIn,
+    ExprRange,
+    ExprRangeList,
     ExprUnary,
     ExprConstant,
     ExprCall,
@@ -49,6 +54,8 @@ class ExprMapper:
         self.config = config
         self.error_reporter = error_reporter
         self._field_context: dict = {}  # field name → index in DataTypeComponent.fields
+        #: Maps a slang type to an IR type, for casts (set by the class mapper).
+        self.type_fn = None
 
     def set_field_context(self, field_map: dict) -> None:
         """Set the field name→index map used to resolve ClassProperty references."""
@@ -94,6 +101,8 @@ class ExprMapper:
                 return self._map_conversion(sv_expr)
             elif expr_kind == pyslang.ast.ExpressionKind.ConditionalOp:
                 return self._map_conditional(sv_expr)
+            elif expr_kind == pyslang.ast.ExpressionKind.Inside:
+                return self._map_inside(sv_expr)
             else:
                 self.error_reporter.error(f"Unsupported expression kind: {expr_kind}")
                 return None
@@ -140,13 +149,34 @@ class ExprMapper:
             
             if left is None or right is None:
                 return None
-            
+
+            if isinstance(zuspec_op, CmpOp):
+                return ExprCompare(left=left, ops=[zuspec_op], comparators=[right])
             return ExprBin(lhs=left, op=zuspec_op, rhs=right)
             
         except Exception as e:
             self.error_reporter.error(f"Error mapping binary op: {str(e)}")
             return None
     
+    def _map_inside(self, sv_expr) -> Optional[ExprIn]:
+        """``x inside {2, [4:8]}``"""
+        value = self.map_expression(sv_expr.left)
+        ranges = []
+        for r in sv_expr.rangeList:
+            if r.kind == pyslang.ast.ExpressionKind.ValueRange:
+                lo, hi = self.map_expression(r.left), self.map_expression(r.right)
+                if lo is None or hi is None:
+                    return None
+                ranges.append(ExprRange(lower=lo, upper=hi))
+            else:
+                v = self.map_expression(r)
+                if v is None:
+                    return None
+                ranges.append(ExprRange(lower=v))
+        if value is None:
+            return None
+        return ExprIn(value=value, container=ExprRangeList(ranges=ranges))
+
     def _map_conditional(self, sv_expr) -> Optional[ExprIfExp]:
         """Map ``c ? a : b`` (one plain condition, no ``matches``)."""
         conds = list(sv_expr.conditions)
@@ -173,7 +203,7 @@ class ExprMapper:
             'BinaryOperator.BinaryXor': BinOp.BitXor,
             'BinaryOperator.LogicalShiftLeft': BinOp.LShift,
             'BinaryOperator.LogicalShiftRight': BinOp.RShift,
-            # Comparisons - use CmpOp (we'll need ExprCompare for these)
+            # Comparisons: an ExprCompare
             'BinaryOperator.Equality': CmpOp.Eq,
             'BinaryOperator.Inequality': CmpOp.NotEq,
             'BinaryOperator.CaseEquality': CmpOp.CaseEq,
@@ -342,9 +372,18 @@ class ExprMapper:
             return None
     
     def _map_conversion(self, sv_expr) -> Optional[Expr]:
-        """Map conversion (implicit cast) - just map the operand."""
+        """A cast written in the source (``int'(x)``, ``t'(x)``) is an
+        ``ExprCast`` to its type (when ``type_fn`` is set); an implicit
+        conversion is just its operand."""
         try:
-            return self.map_expression(sv_expr.operand)
+            operand = self.map_expression(sv_expr.operand)
+            syn = getattr(sv_expr, "syntax", None)
+            if (operand is not None and self.type_fn is not None and syn is not None
+                    and syn.kind.name == "CastExpression"):
+                t = self.type_fn(sv_expr.type)
+                if t is not None:
+                    return ExprCast(target_type=t, value=operand)
+            return operand
         except Exception as e:
             self.error_reporter.error(f"Error mapping conversion: {str(e)}")
             return None

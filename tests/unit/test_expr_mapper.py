@@ -234,7 +234,7 @@ def test_map_case_equality(mapper, op, cmp):
     assert found
     ir_expr = expr_mapper.map_expression(found[0])
     assert not error_reporter.has_errors()
-    assert ir_expr.op == getattr(CmpOp, cmp)
+    assert ir_expr.ops == [getattr(CmpOp, cmp)]
 
 
 def test_reject_4state_equality(mapper):

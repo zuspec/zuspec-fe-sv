@@ -35,6 +35,11 @@ class TypeMapper:
         #: ``DataTypeEnum``; of an integral type, a named ``DataTypeInt``; of
         #: another typedef, a named ``DataTypeRef`` to it.
         self.types: Dict[str, DataType] = {}
+        #: Maps a class-scope typedef (``p::cls::aw_t``); set by the class
+        #: mapper. Without it, such a typedef is mapped like a package one.
+        self.class_local = None
+        #: For attribute queries on struct members.
+        self.compilation = None
 
     def map_type(self, sv_type, allow_4state: bool = True) -> Optional[DataType]:
         """Map a slang type to Zuspec IR.
@@ -51,6 +56,8 @@ class TypeMapper:
         if kind == "TypeAliasType":
             if _type_param_alias(sv_type):
                 return self.map_type(sv_type.targetType.type, allow_4state)
+            if self.class_local is not None and _class_local(sv_type):
+                return self.class_local(sv_type)
             return self._map_typedef(sv_type, allow_4state)
         if kind == "EnumType":
             return self._map_enum(sv_type, None, allow_4state)
@@ -101,7 +108,11 @@ class TypeMapper:
             ft = self.map_type(m.type, allow_4state)
             if ft is None:
                 return None
-            fields.append(Field(name=m.name, datatype=ft))
+            f = Field(name=m.name, datatype=ft)
+            if self.compilation is not None:
+                from zuspec.fe.sv.function_mapper import sv_annotations
+                f.annotations = sv_annotations(self.compilation, m)
+            fields.append(f)
         return DataTypeStruct(name=name, super=None, packed=True, fields=fields)
 
     def _map_integral(self, sv_type, allow_4state: bool) -> Optional[DataTypeInt]:
@@ -224,3 +235,8 @@ def _type_param_alias(t) -> bool:
     p = getattr(t, "parentScope", None)
     m = p.find(t.name) if p is not None else None
     return type(m).__name__ == "TypeParameterSymbol"
+
+
+def _class_local(alias) -> bool:
+    """A typedef declared in a class (``p::cls::aw_t``), not a package."""
+    return str(alias).count("::") >= 2

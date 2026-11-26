@@ -13,8 +13,9 @@ from zuspec.ir.core.stmt import (
     StmtBreak,
     StmtContinue,
     StmtExpr,
+    StmtAnnAssign,
 )
-from zuspec.ir.core.expr import ExprRefLocal, ExprConstant
+from zuspec.ir.core.expr import ExprRefLocal, ExprConstant, ExprRefUnresolved
 from zuspec.fe.sv.error import ErrorReporter
 from zuspec.fe.sv.config import SVToZuspecConfig
 from zuspec.fe.sv.expr_mapper import ExprMapper
@@ -41,6 +42,8 @@ class StmtMapper:
         self.config = config
         self.error_reporter = error_reporter
         self.expr_mapper = expr_mapper
+        #: Maps a local's slang type to an IR type (set by the class mapper).
+        self.type_fn = None
     
     def map_statement(self, sv_stmt) -> Optional[Stmt]:
         """Map a SystemVerilog statement to Zuspec IR.
@@ -101,7 +104,11 @@ class StmtMapper:
             # Statement list
             elif stmt_kind == pyslang.ast.StatementKind.List:
                 return self._map_statement_list(sv_stmt)
-            
+
+            # Local variable declaration
+            elif stmt_kind == pyslang.ast.StatementKind.VariableDeclaration:
+                return self._map_var_decl(sv_stmt)
+
             else:
                 self.error_reporter.error(f"Unsupported statement kind: {stmt_kind}")
                 return None
@@ -202,6 +209,26 @@ class StmtMapper:
             self.error_reporter.error(f"Error mapping assignment: {str(e)}")
             return None
     
+    def _map_var_decl(self, sv_stmt) -> Optional[StmtAnnAssign]:
+        """``T x = init;``: a typed local (``ir_type``), its initializer
+        as the value."""
+        sym = sv_stmt.symbol
+        ir_type = self.type_fn(sym.type) if self.type_fn is not None else None
+        if ir_type is None:
+            self.error_reporter.error(f"Unsupported type of local {sym.name}: {sym.type}")
+            return None
+        value = None
+        if sym.initializer is not None:
+            value = self.expr_mapper.map_expression(sym.initializer)
+            if value is None:
+                return None
+        return StmtAnnAssign(target=ExprRefLocal(name=sym.name),
+                             # the type is ``ir_type``; the annotation only
+                             # names it (a typedef), so equal types compare equal
+                             annotation=ExprRefUnresolved(
+                                 name=getattr(ir_type, "ref_name", None) or ""),
+                             value=value, ir_type=ir_type)
+
     def _map_return(self, sv_stmt) -> Optional[StmtReturn]:
         """Map return statement."""
         try:

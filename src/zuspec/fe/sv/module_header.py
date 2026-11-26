@@ -327,7 +327,21 @@ def _xlate(syn, scope):
     if k == "IdentifierName":
         m = _lookup(scope, syn.identifier.valueText)
         if m is not None and type(m).__name__ == "ParameterSymbol":
-            return ir.ExprRefParam(name=m.name)
+            return package_ref(m) or ir.ExprRefParam(name=m.name)
+        return None
+    if k == "MemberAccessExpression":              # ``f().ADDR_W``
+        base = _xlate(syn.left, scope)
+        return None if base is None else ir.ExprAttribute(
+            value=base, attr=syn.name.valueText)
+    if k == "ScopedName" and syn.right.kind.name == "IdentifierName":
+        sep = syn.separator.valueText
+        if sep == ".":                                # ``P.ADDR_W``
+            base = _xlate(syn.left, scope)
+            return None if base is None else ir.ExprAttribute(
+                value=base, attr=syn.right.identifier.valueText)
+        if sep == "::" and syn.left.kind.name == "IdentifierName":   # ``pkg::W``
+            return ir.ExprRefPackage(package=syn.left.identifier.valueText,
+                                     name=syn.right.identifier.valueText)
         return None
     if k in _XBIN:
         a, b = _xlate(syn.left, scope), _xlate(syn.right, scope)
@@ -345,8 +359,38 @@ def _xlate(syn, scope):
             a = _xlate(getattr(args[0], "expr", None), scope)
             if a is not None:
                 return ir.ExprCall(func=ir.ExprRefUnresolved(name="clog2"), args=[a])
-        return None
+            return None
+        # a package function (``w1(P.ID_W)``)
+        f = _lookup(scope, name) if syn.left.kind.name == "IdentifierName" else None
+        if f is None or f.kind.name != "Subroutine" or args is None:
+            return None
+        xs = []
+        for a in _items(args):
+            if a.kind.name != "OrderedArgument":
+                return None
+            x = _xlate(getattr(a, "expr", None), scope)
+            if x is None:
+                return None
+            xs.append(x)
+        return ir.ExprCall(func=package_ref(f) or ir.ExprRefUnresolved(name=f.name),
+                           args=xs)
     return None
+
+
+def _items(seq):
+    """The nodes of a separated syntax list (without its comma tokens)."""
+    return [x for x in seq if type(x).__name__ != "Token"]
+
+
+def package_ref(sym):
+    """An ``ExprRefPackage`` for a package member (``pkg::name``), or
+    None when ``sym`` is not one."""
+    import zuspec.ir.core as ir
+    hp = getattr(sym, "hierarchicalPath", "") or ""
+    if hp.count("::") != 1 or "#" in hp:
+        return None
+    pkg, name = hp.split("::")
+    return ir.ExprRefPackage(package=pkg, name=name)
 
 
 # ----------------------------------------------------- package type lookup

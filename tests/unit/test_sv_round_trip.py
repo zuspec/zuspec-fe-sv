@@ -24,22 +24,13 @@ def _map(text):
 
 
 def _emit(m):
-    decls = m.get_classes() + m.get_templates() + m.get_protocols()
-    return SVEmitter().emit_one(translate_package(PKG, m.get_types(), decls))
+    return SVEmitter().emit_one(translate_package(PKG, m.get_types(), m.get_decls()))
 
 
 def _decls(m):
-    """Declarations by name, methods in name order (the emitter groups
-    functions before tasks)."""
-    out = {}
-    for d in m.get_classes() + m.get_templates() + m.get_protocols():
-        body = getattr(d, "body", None) or d
-        for attr in ("functions", "methods"):
-            if getattr(body, attr, None):
-                setattr(body, attr, sorted(getattr(body, attr),
-                                           key=lambda f: f.name))
-        out[d.name] = d
-    return out
+    """Declarations by name (methods keep source order through the
+    emitter)."""
+    return {d.name: d for d in m.get_decls()}
 
 
 @pytest.fixture(scope="module")

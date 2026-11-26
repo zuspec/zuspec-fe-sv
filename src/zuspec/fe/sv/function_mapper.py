@@ -35,12 +35,43 @@ def sv_annotations(compilation, sym) -> List[Annotation]:
     its value under ``"value"`` (1 when the attribute has none)."""
     if compilation is None:
         return []
-    from zuspec.fe.sv.module_header import _value
     try:
-        return [Annotation(type_qname=a.name, values={"value": _value(a.value)})
-                for a in compilation.getAttributes(sym)]
+        out = [Annotation(type_qname=a.name, values={"value": _attr_value(a)})
+               for a in compilation.getAttributes(sym)]
     except Exception:
+        out = []
+    return out or _syntax_annotations(sym)
+
+
+def _syntax_annotations(sym) -> List[Annotation]:
+    """Attributes read from a declaration's syntax: slang keeps none for a
+    class declaration (``(* fw_api *) interface class ...``)."""
+    from zuspec.fe.sv.module_header import _items, _value
+    syn = getattr(sym, "syntax", None)
+    if syn is None or syn.kind.name != "ClassDeclaration":
         return []
+    out = []
+    for inst in syn.attributes:
+        for spec in _items(inst.specs):
+            v = 1
+            e = getattr(spec.value, "expr", None) if spec.value is not None else None
+            if e is not None:
+                text = str(e).strip()
+                v = (text[1:-1] if e.kind.name == "StringLiteralExpression"
+                     else _value(text))
+            out.append(Annotation(type_qname=spec.name.valueText, values={"value": v}))
+    return out
+
+
+def _attr_value(a):
+    """An attribute's value: a string literal as the string (slang may
+    hold it as its packed integer, as on a struct member), else the
+    constant's value."""
+    from zuspec.fe.sv.module_header import _value
+    syn = getattr(getattr(getattr(a, "syntax", None), "value", None), "expr", None)
+    if syn is not None and syn.kind.name == "StringLiteralExpression":
+        return str(a.value.convertToStr()).strip('"')
+    return _value(a.value)
 
 
 class FunctionMapper:
@@ -71,6 +102,9 @@ class FunctionMapper:
         #: mapper sets it (so type parameters and classes resolve). When
         #: None, only integral return types are mapped.
         self.type_fn = None
+        #: Maps a declaration (an argument) from its type and type syntax;
+        #: preferred over ``type_fn`` when set.
+        self.decl_type_fn = None
         #: pyslang.ast.Compilation, for attributes; set by the SV mapper.
         self.compilation = None
     
@@ -160,7 +194,9 @@ class FunctionMapper:
                     
                     # Get argument type annotation
                     datatype = None
-                    if self.type_fn is not None and hasattr(arg, 'type'):
+                    if self.decl_type_fn is not None:
+                        datatype = self.decl_type_fn(arg)
+                    elif self.type_fn is not None and hasattr(arg, 'type'):
                         datatype = self.type_fn(arg.type)
                     direction = _ARG_DIRECTIONS.get(
                         str(getattr(arg, 'direction', '')).split('.')[-1])
